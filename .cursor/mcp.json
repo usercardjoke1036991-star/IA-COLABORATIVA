@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "arquitecto-externo": {
+      "command": "C:\\Users\\Vexor\\Downloads\\Descargas1\\IA COLABORATIVA\\venv\\Scripts\\python.exe",
+      "args": [
+        "C:\\Users\\Vexor\\Downloads\\Descargas1\\IA COLABORATIVA\\arquitecto_mcp.py"
+      ],
+      "env": {
+        "ARQUITECTO_LOG": "INFO"
+      }
+    }
+  }
+}

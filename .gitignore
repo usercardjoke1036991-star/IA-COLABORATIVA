@@ -1,0 +1,25 @@
+# --- Secretos (NUNCA se suben) ---------------------------------------------
+.env
+
+# --- Entornos virtuales -----------------------------------------------------
+venv/
+.venv/
+env/
+
+# --- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# --- Estado local del Arquitecto -------------------------------------------
+datos/
+*.log
+
+# --- Artefactos generados por el loop --------------------------------------
+PLAN_ARQUITECTO.md
+
+# --- Proyectos creados por la fabrica --------------------------------------
+# Cada proyecto es su propio repositorio: no se anidan en este.
+proyectos/

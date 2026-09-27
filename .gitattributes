@@ -1,0 +1,19 @@
+# Normalizacion de finales de linea en el repositorio.
+* text=auto eol=lf
+
+# Los scripts de PowerShell se guardan con CRLF (Windows PowerShell 5.1 los
+# espera asi); los de bash, con LF.
+*.ps1 text eol=crlf
+*.sh text eol=lf
+
+# Binarios: nunca se tocan.
+*.png binary
+*.jpg binary
+*.ico binary
+*.exe binary
+*.dll binary
+*.zip binary
+*.pdf binary
+
+# Archivos generados: no se diffean.
+coverage.xml linguist-generated=true

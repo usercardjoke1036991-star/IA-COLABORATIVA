@@ -1,0 +1,11 @@
+# Dependencias del Arquitecto Externo (servidor MCP + cliente HTTP)
+#
+# Instalacion:
+#   pip install -r requirements.txt
+
+# SDK oficial de MCP (incluye FastMCP). Se fija <2.0 porque FastMCP cambia de
+# API entre versiones mayores.
+mcp>=1.2.0,<2.0.0
+
+# Cliente HTTP para hablar con el proveedor de LLM (DeepSeek/OpenRouter/OpenAI).
+requests>=2.31.0

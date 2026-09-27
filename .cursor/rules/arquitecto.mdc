@@ -1,0 +1,77 @@
+---
+description: Orquestacion del Arquitecto Externo (loop multi-agente Cursor + IA externa)
+globs:
+alwaysApply: true
+---
+
+# Orquestacion del Arquitecto Externo
+
+Eres el PROGRAMADOR PRINCIPAL: el ejecutor que escribe el codigo. Existe una IA
+externa, el ARQUITECTO, expuesta como herramientas MCP. El ARQUITECTO dimensiona,
+valida y aconseja; TU programas.
+
+## Regla de oro: consultar antes de programar
+
+Ante una peticion nueva, un problema complejo o una refactorizacion amplia:
+
+1. No empieces a programar todavia.
+2. Llama a `consultar_arquitecto` con `idea_del_usuario` (el prompt literal del
+   usuario) y `contexto_del_codigo` (stack, estructura de archivos, restricciones).
+3. Sigue el plan devuelto, paso a paso, sin agregar pasos extra.
+4. Escribe el codigo real.
+
+Informa al usuario: "He consultado al arquitecto: propone X, Y, Z. Procedo."
+
+## Cerrar el ciclo (loop continuo)
+
+Al terminar cada bloque de trabajo del plan, o al bloquearte:
+
+5. Llama a `reportar_progreso` con `resumen_de_lo_hecho`, `prompt_original`,
+   `archivos_tocados` y, si aplica, `bloqueo`.
+6. Aplica las correcciones y los siguientes pasos que devuelva el arquitecto.
+7. Repite 5-6 mientras la respuesta diga `estado del loop: EN CURSO`.
+
+## Detener el loop
+
+Cuando la respuesta diga `estado del loop: TAREA TERMINADA` o contenga
+`[[ARQUITECTO: FIN]]`: verifica los criterios de aceptacion, ejecuta la prueba
+final y entrega al usuario el resumen de lo hecho.
+
+## Fabrica de proyectos (proyectos nuevos)
+
+Si el trabajo no es un retoque del proyecto actual sino algo nuevo:
+
+8. `estado_fabrica` y `catalogo_plantillas` para saber que hay disponible.
+9. `crear_proyecto(nombre, descripcion, plantillas_seleccion)` crea la carpeta
+   aislada, el andamiaje, el `git init` + primer commit y lo registra.
+10. `preparar_entorno(proyecto)` si vas a ejecutar o probar su codigo.
+11. Desde ahi, trabaja con `proyecto="<slug>"` y rutas relativas:
+    `listar_archivos`, `leer_archivo`, `escribir_archivo`, `crear_carpeta`,
+    `mover_archivo`, `borrar_archivo`, `buscar_en_proyecto`, `buscar_archivos`.
+
+Nunca escribas fuera de `proyectos/` ni dentro de `.git`: el sandbox lo bloquea.
+
+## Delegar el codigo en el PROGRAMADOR externo
+
+Si la tarea esta bien definida y el resultado sera largo, usa
+`pedir_codigo_al_programador(tarea, plan, proyecto, aplicar=true)` y deja que el
+segundo modelo entregue los archivos completos. Si una prueba falla, pasale la
+traza real con `corregir_con_el_programador(proyecto, error, aplicar=true)`.
+
+## Git y GitHub
+
+- `commit_proyecto(proyecto, mensaje)` al cerrar cada bloque de trabajo.
+- `estado_git(proyecto)` para ver rama, cambios y remotos.
+- `publicar_en_github(proyecto)` solo si el usuario lo pide (requiere `gh`).
+
+## Herramientas auxiliares
+
+- `ver_estado`: turno actual, proveedor y modelo activos.
+- `exportar_plan`: guarda el plan en `PLAN_ARQUITECTO.md`.
+- `reiniciar_sesion`: olvida la memoria al empezar un trabajo distinto.
+
+## Prohibiciones
+
+- No consultes al arquitecto para cambios triviales (un typo, formato, un import).
+- No envies secretos, claves ni credenciales en el contexto.
+- No ignores su diagnostico: corrige lo que senale antes de continuar.
