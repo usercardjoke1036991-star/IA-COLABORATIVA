@@ -362,11 +362,33 @@ powershell -ExecutionPolicy Bypass -File scripts\sonar.ps1
 
 El script levanta SonarQube Community (`docker-compose.sonarqube.yml`), espera a
 que este `UP`, ejecuta las pruebas con cobertura y lanza el scanner oficial dentro
-de un contenedor. La primera vez:
+de un contenedor.
 
-1. Abre http://localhost:9000 (usuario `admin`, contrasena `admin`).
-2. `My Account` -> `Security` -> `Generate Tokens` (tipo *Analysis*).
-3. Copia el token en tu `.env` (`SONAR_TOKEN=sqa_...`) y repite el script.
+**La primera vez** el servidor no tiene token, asi que dejalo listo con:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\conectar_sonar.ps1
+```
+
+Ese script espera al servidor, cambia la contrasena de fabrica de `admin` por una
+aleatoria robusta, genera un token de analisis y escribe `SONAR_HOST_URL`,
+`SONAR_TOKEN` y `SONAR_ADMIN_PASSWORD` en tu `.env`. A partir de ahi
+`scripts\sonar.ps1` funciona solo. Si prefieres hacerlo a mano: abre
+http://localhost:9000, entra con `admin` / `admin`, cambia la contrasena y crea el
+token en `My Account` -> `Security` -> `Generate Tokens`.
+
+La primera ejecucion tarda unos minutos: descarga la imagen del scanner y todos
+los plugins del servidor (quedan en cache para las siguientes veces).
+
+El informe queda en
+http://localhost:9000/dashboard?id=usercardjoke1036991-star_IA-COLABORATIVA
+
+Para parar el servidor cuando termines (los datos se conservan en volumenes):
+
+```powershell
+docker compose -f docker-compose.sonarqube.yml down       # parar
+docker compose -f docker-compose.sonarqube.yml down -v    # parar y borrar todo
+```
 
 **Opcion B - SonarQube Cloud** (repositorio publico, sin Docker):
 
@@ -383,6 +405,7 @@ anade el secreto `SONAR_TOKEN` en `Settings -> Secrets and variables -> Actions`
 | `sonar-project.properties` | Clave del proyecto, fuentes, exclusiones y rutas de cobertura. |
 | `docker-compose.sonarqube.yml` | SonarQube Community local (puerto 9000, volumenes persistentes). |
 | `scripts/sonar.ps1` | Flujo completo: servidor + pruebas + scanner + quality gate. |
+| `scripts/conectar_sonar.ps1` | Primera puesta en marcha: contrasena de admin y token en el `.env`. |
 | `.coveragerc` | Que mide la cobertura y que excluye (venv, tests, scripts, plantillas). |
 | `.github/workflows/ci.yml` | Pruebas en CI y analisis en SonarQube. |
 
@@ -552,6 +575,7 @@ venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 venv\Scripts\python.exe -m pytest -q --cov --cov-report=xml:coverage.xml --cov-report=term-missing
 
 # Analisis de calidad: SonarQube local en Docker (o SonarQube Cloud)
+powershell -ExecutionPolicy Bypass -File scripts\conectar_sonar.ps1   # solo la primera vez
 powershell -ExecutionPolicy Bypass -File scripts\sonar.ps1
 powershell -ExecutionPolicy Bypass -File scripts\sonar.ps1 -Servidor https://sonarcloud.io
 

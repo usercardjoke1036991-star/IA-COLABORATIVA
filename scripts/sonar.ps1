@@ -176,8 +176,20 @@ Paso "4/4 Resultado"
 try {
     $cabecera = @{ Authorization = "Basic " + [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("${Token}:")) }
     $consulta = "$Servidor/api/qualitygates/project_status?projectKey=$Clave"
-    $estado = (Invoke-RestMethod -Uri $consulta -Headers $cabecera -TimeoutSec 30).projectStatus.status
-    Bien "Quality gate: $estado"
+    # El servidor procesa el informe en segundo plano: al principio devuelve
+    # NONE y hay que esperar a que calcule el quality gate.
+    $estado = "NONE"
+    for ($i = 0; $i -lt 12; $i++) {
+        $estado = (Invoke-RestMethod -Uri $consulta -Headers $cabecera -TimeoutSec 30).projectStatus.status
+        if ($estado -ne "NONE" -and $estado -ne "PENDING") { break }
+        Start-Sleep -Seconds 5
+    }
+    switch ($estado) {
+        "OK" { Bien "Quality gate: OK" }
+        "ERROR" { Aviso "Quality gate: ERROR (mira el detalle en el informe)" }
+        "WARN" { Aviso "Quality gate: WARN (mira el detalle en el informe)" }
+        default { Aviso "Quality gate: $estado" }
+    }
 } catch {
     Aviso "No se pudo consultar el quality gate (mira el informe en el navegador)."
 }

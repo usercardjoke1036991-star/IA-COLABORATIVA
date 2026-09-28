@@ -2,6 +2,10 @@
 [run]
 branch = False
 source = .
+# Rutas relativas en el XML: imprescindible cuando el analisis lo hace el
+# scanner en un contenedor Linux (si no, SonarQube no sabe mapear rutas
+# tipo C:\...\proyecto y avisa de "Invalid directory path in 'source'").
+relative_files = True
 omit =
     venv/*
     .venv/*
