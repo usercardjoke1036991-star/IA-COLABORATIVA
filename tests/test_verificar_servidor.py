@@ -460,3 +460,22 @@ def test_paso_global_si_falla_si_hay_cursor_sin_reglas(tmp_path, monkeypatch, ca
     texto = capsys.readouterr().out
     assert "faltan las reglas globales de Cursor" in texto
 
+
+def test_paso_global_falla_si_las_reglas_estan_incompletas(tmp_path, monkeypatch, capsys):
+    """Reglas a medias (sin ``alwaysApply`` ni ``activar_proyecto``): fallo.
+
+    Es la otra mitad del atajo del punto anterior: el atajo solo tapa el caso de
+    "no hay Cursor instalado", nunca el de un Cursor que si esta y le falta el
+    disparador del arranque.
+    """
+    activacion = _sin_cline(monkeypatch)
+    cursor = tmp_path / ".cursor"
+    reglas = cursor / "rules" / activacion.NOMBRE_REGLAS_GLOBALES
+    reglas.parent.mkdir(parents=True)
+    reglas.write_text("---\ndescription: a medias\n---\n", encoding="utf-8")
+    monkeypatch.setattr(activacion, "raiz_cursor", lambda: cursor)
+
+    assert verificador.paso_global() is False
+
+    assert "reglas globales incompletas" in capsys.readouterr().out
+

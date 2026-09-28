@@ -79,7 +79,14 @@ def _borrar_temporal(ruta: Path, intentos: int = 3) -> bool:
             time.sleep(espera)
         for entrada in (ruta, *ruta.rglob("*")):
             try:
-                os.chmod(entrada, stat.S_IWRITE)
+                modo = stat.S_IWRITE
+                if entrada.is_dir():
+                    # En POSIX un directorio con solo permiso de escritura no se
+                    # puede recorrer ni borrar (``rmtree`` lo deja atras): hacen
+                    # falta tambien lectura y busqueda. En Windows chmod solo usa
+                    # el bit de solo lectura, asi que estos bits no molestan.
+                    modo |= stat.S_IREAD | stat.S_IEXEC
+                os.chmod(entrada, modo)
             except OSError:  # pragma: no cover - entrada ya borrada o sin permisos
                 pass
         shutil.rmtree(ruta, ignore_errors=True)

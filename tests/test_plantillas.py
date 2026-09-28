@@ -10,6 +10,7 @@ registro del servidor MCP (`.cursor/mcp.json`) y plantilla de credenciales
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -128,9 +129,14 @@ def test_el_registro_mcp_usa_el_interprete_del_venv_de_la_fabrica():
         "arquitecto-externo"
     ]["command"]
     venv = plantillas.rutas.raiz_proyecto() / "venv"
+    # El interprete lleva el nombre de SU plataforma: un venv creado en Windows
+    # (visible desde WSL en /mnt/c) tiene Scripts/python.exe y no bin/python, y
+    # entonces la fabrica no puede usarlo aunque la carpeta del venv exista.
+    piezas = ("Scripts", "python.exe") if os.name == "nt" else ("bin", "python")
+    interprete = venv.joinpath(*piezas)
 
     assert comando == plantillas._interprete_mcp()
-    if venv.is_dir():
+    if interprete.is_file():
         assert comando.startswith(venv.as_posix()), "debe apuntar al venv de la fabrica"
     else:  # pragma: no cover - runner sin venv
         assert comando == "python"

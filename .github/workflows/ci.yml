@@ -126,6 +126,9 @@ jobs:
             pytest-report.xml
           if-no-files-found: ignore
 
+  # OJO: sin el secreto SONAR_TOKEN este job queda `skipped` (no es un fallo): el
+  # analisis efectivo lo hace el Automatic Analysis de SonarQube Cloud, que publica
+  # su propio check "SonarCloud Code Analysis" en cada push.
   calidad:
     name: SonarQube
     runs-on: ubuntu-latest
