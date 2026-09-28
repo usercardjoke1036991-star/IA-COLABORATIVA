@@ -1,0 +1,25 @@
+# Cobertura para la suite de pruebas y para SonarQube.
+[run]
+branch = False
+source = .
+omit =
+    venv/*
+    .venv/*
+    env/*
+    tests/*
+    scripts/*
+    datos/*
+    proyectos/*
+    plantillas.py
+    IA COLABORATIVA.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    raise NotImplementedError
+show_missing = True
+skip_covered = False
+
+[xml]
+output = coverage.xml

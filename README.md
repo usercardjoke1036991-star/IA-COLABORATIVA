@@ -324,6 +324,70 @@ Con `corregir_con_el_programador` le pasas la traza del error real.
 
 ---
 
+---
+
+## Publicar en GitHub y calidad (SonarQube)
+
+### Subir este proyecto a un repositorio
+
+El repositorio ya viene preparado: `.gitignore` deja fuera `.env`, `venv/`,
+`datos/` y `proyectos/`, y `.gitattributes` fija LF para el codigo y CRLF para los
+`.ps1`.
+
+```powershell
+git init -b main                     # solo si aun no es un repositorio
+git add -A
+git commit -m "feat: arquitecto externo con fabrica de proyectos"
+git remote add origin https://github.com/<usuario>/<repo>.git
+git push -u origin main
+```
+
+La primera vez, Git Credential Manager abre el navegador para autenticarte y
+despues guarda la credencial (no vuelve a pedirla).
+
+Ademas hay integracion continua en `.github/workflows/ci.yml`:
+
+- **pruebas**: `pytest` con cobertura en Linux y Windows (matriz de runners) y, en
+  Windows, los dos verificadores (`verificar_servidor.py` y `verificar_fabrica.py`).
+- **calidad**: analisis con `SonarSource/sonarqube-scan-action`, que solo se
+  ejecuta si existe el secreto `SONAR_TOKEN`; sin el, el CI sigue en verde.
+
+### Analisis con SonarQube
+
+**Opcion A - local en Docker** (no hace falta instalar nada mas):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\sonar.ps1
+```
+
+El script levanta SonarQube Community (`docker-compose.sonarqube.yml`), espera a
+que este `UP`, ejecuta las pruebas con cobertura y lanza el scanner oficial dentro
+de un contenedor. La primera vez:
+
+1. Abre http://localhost:9000 (usuario `admin`, contrasena `admin`).
+2. `My Account` -> `Security` -> `Generate Tokens` (tipo *Analysis*).
+3. Copia el token en tu `.env` (`SONAR_TOKEN=sqa_...`) y repite el script.
+
+**Opcion B - SonarQube Cloud** (repositorio publico, sin Docker):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\sonar.ps1 -Servidor https://sonarcloud.io
+```
+
+Para el CI: crea el proyecto en <https://sonarcloud.io> (organizacion
+`usercardjoke1036991-star`, clave `usercardjoke1036991-star_IA-COLABORATIVA`) y
+anade el secreto `SONAR_TOKEN` en `Settings -> Secrets and variables -> Actions`.
+
+| Archivo | Para que sirve |
+|---|---|
+| `sonar-project.properties` | Clave del proyecto, fuentes, exclusiones y rutas de cobertura. |
+| `docker-compose.sonarqube.yml` | SonarQube Community local (puerto 9000, volumenes persistentes). |
+| `scripts/sonar.ps1` | Flujo completo: servidor + pruebas + scanner + quality gate. |
+| `.coveragerc` | Que mide la cobertura y que excluye (venv, tests, scripts, plantillas). |
+| `.github/workflows/ci.yml` | Pruebas en CI y analisis en SonarQube. |
+
+---
+
 ## Referencia de las herramientas MCP
 
 ### `consultar_arquitecto(idea_del_usuario, contexto_del_codigo="")`
@@ -482,6 +546,14 @@ venv\Scripts\python.exe scripts\verificar_servidor.py
 
 # Cliente MCP por stdio: la misma conversacion que hara Cursor
 venv\Scripts\python.exe scripts\prueba_cliente_mcp.py
+
+# Suite de pruebas con cobertura (la que alimenta a SonarQube)
+venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+venv\Scripts\python.exe -m pytest -q --cov --cov-report=xml:coverage.xml --cov-report=term-missing
+
+# Analisis de calidad: SonarQube local en Docker (o SonarQube Cloud)
+powershell -ExecutionPolicy Bypass -File scripts\sonar.ps1
+powershell -ExecutionPolicy Bypass -File scripts\sonar.ps1 -Servidor https://sonarcloud.io
 
 # Todo de golpe
 powershell -ExecutionPolicy Bypass -File scripts\probar.ps1

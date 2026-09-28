@@ -1,0 +1,103 @@
+name: CI
+
+# Que hace:
+#   1. pruebas      -> pytest (con cobertura) en Linux y Windows + verificadores del MCP.
+#   2. calidad      -> analisis en SonarQube Cloud (solo si existe el secreto SONAR_TOKEN).
+#
+# Secretos necesarios para el paso de calidad (Settings -> Secrets -> Actions):
+#   SONAR_TOKEN     token de analisis de https://sonarcloud.io
+#   SONAR_HOST_URL  (opcional) URL de un SonarQube Server propio; si falta, se usa SonarCloud.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pruebas:
+    name: Pruebas (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Identidad de git para la fabrica
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: pytest con cobertura
+        run: python -m pytest -q --cov --cov-report=xml --cov-report=term-missing --junitxml=pytest-report.xml
+
+      - name: Verificadores del servidor MCP y de la fabrica
+        if: runner.os == 'Windows'
+        run: |
+          python scripts/verificar_servidor.py
+          python scripts/verificar_fabrica.py
+
+      - name: Guardar informes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: informes-${{ matrix.os }}
+          path: |
+            coverage.xml
+            pytest-report.xml
+          if-no-files-found: ignore
+
+  calidad:
+    name: SonarQube
+    runs-on: ubuntu-latest
+    needs: pruebas
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL || 'https://sonarcloud.io' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Identidad de git para la fabrica
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Cobertura para el analisis
+        run: python -m pytest -q --cov --cov-report=xml:coverage.xml --junitxml=pytest-report.xml
+
+      - name: Analizar (se omite si no hay SONAR_TOKEN)
+        if: env.SONAR_TOKEN != ''
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
+
+      - name: Recordatorio si falta el token
+        if: env.SONAR_TOKEN == ''
+        run: echo "Sin SONAR_TOKEN: define el secreto para activar el analisis de SonarQube."

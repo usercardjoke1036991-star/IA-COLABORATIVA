@@ -48,4 +48,14 @@ Remove-Item Env:\ARQUITECTO_CARPETA_PROYECTOS -ErrorAction SilentlyContinue
 Remove-Item Env:\ARQUITECTO_REGISTRO -ErrorAction SilentlyContinue
 
 Write-Host ""
+Write-Host "== 7) Suite de pruebas (pytest) ==" -ForegroundColor Cyan
+$tienePytest = & $py -c "import pytest, pytest_cov; print('si')" 2>$null
+if ($tienePytest -eq "si") {
+    & $py -m pytest -q
+} else {
+    Write-Host "pytest no esta instalado. Instalalo con: $py -m pip install -r requirements-dev.txt" -ForegroundColor Yellow
+}
+
+
+Write-Host ""
 Write-Host "Pruebas terminadas." -ForegroundColor Green

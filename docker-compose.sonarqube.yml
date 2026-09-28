@@ -1,0 +1,34 @@
+# SonarQube Community Edition en local, para analizar sin depender de la nube.
+#
+#   docker compose -f docker-compose.sonarqube.yml up -d      # arrancar
+#   docker compose -f docker-compose.sonarqube.yml ps         # estado
+#   docker compose -f docker-compose.sonarqube.yml down       # parar (conserva datos)
+#   docker compose -f docker-compose.sonarqube.yml down -v    # parar y borrar todo
+#
+# Panel web: http://localhost:9000  (admin / admin la primera vez; SonarQube te
+# obliga a cambiar la contrasena). Despues, en My Account -> Security, genera un
+# token de analisis y guardalo en el .env como SONAR_TOKEN.
+#
+# La ruta completa (arrancar, esperar y lanzar el analisis) esta automatizada en
+# scripts/sonar.ps1.
+
+services:
+  sonarqube:
+    image: sonarqube:lts-community
+    container_name: sonarqube
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    environment:
+      # En Windows el VM de Docker (WSL2) no siempre trae vm.max_map_count alto:
+      # con esto Elasticsearch no aborta el arranque por los bootstrap checks.
+      SONAR_ES_BOOTSTRAP_CHECKS_DISABLE: "true"
+    volumes:
+      - sonarqube_data:/opt/sonarqube/data
+      - sonarqube_extensions:/opt/sonarqube/extensions
+      - sonarqube_logs:/opt/sonarqube/logs
+
+volumes:
+  sonarqube_data:
+  sonarqube_extensions:
+  sonarqube_logs:

@@ -23,3 +23,10 @@ PLAN_ARQUITECTO.md
 # --- Proyectos creados por la fabrica --------------------------------------
 # Cada proyecto es su propio repositorio: no se anidan en este.
 proyectos/
+
+# --- Calidad y cobertura (SonarQube, pytest) --------------------------------
+.scannerwork/
+coverage.xml
+pytest-report.xml
+.coverage
+htmlcov/

@@ -18,6 +18,7 @@ Todo el modulo es sincrono y sin dependencias externas mas alla de ``git`` y
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from dataclasses import asdict, dataclass, field
@@ -39,8 +40,6 @@ def ruta_registro() -> Path:
     Se puede cambiar con ``ARQUITECTO_REGISTRO`` (util para pruebas o para
     mantener varios cerebros de la fabrica aislados).
     """
-    import os
-
     personalizada = (os.getenv("ARQUITECTO_REGISTRO") or "").strip()
     if not personalizada:
         return RUTA_REGISTRO
@@ -374,6 +373,24 @@ def crear_proyecto(
 # --------------------------------------------------------------------------
 # Entorno virtual del proyecto
 # --------------------------------------------------------------------------
+def interprete_venv(destino: Path) -> Path:
+    """Interprete del entorno virtual de un proyecto (Windows o POSIX).
+
+    Devuelve el que ya exista; si todavia no hay ``venv/``, el que le tocaria
+    segun la plataforma (``venv/Scripts/python.exe`` en Windows,
+    ``venv/bin/python`` en macOS y Linux). Asi el mismo codigo funciona tanto en
+    la maquina local como en un runner de GitHub Actions.
+    """
+    if os.name == "nt":
+        candidatos = [destino / "venv" / "Scripts" / "python.exe", destino / "venv" / "bin" / "python"]
+    else:
+        candidatos = [destino / "venv" / "bin" / "python", destino / "venv" / "Scripts" / "python.exe"]
+    for candidata in candidatos:
+        if candidata.exists():
+            return candidata
+    return candidatos[0]
+
+
 def _crear_venv(destino: Path) -> str:
     """Crea ``venv/`` dentro del proyecto (sin instalar dependencias).
 
@@ -385,10 +402,7 @@ def _crear_venv(destino: Path) -> str:
     """
     import sys
 
-    interprete = destino / "venv" / "Scripts" / "python.exe"
-    if not interprete.exists():
-        interprete = destino / "venv" / "bin" / "python"
-    if interprete.exists():
+    if interprete_venv(destino).exists():
         return "ya existia venv/"
 
     codigo, salida = _ejecutar([sys.executable, "-m", "venv", "venv"], cwd=destino, timeout=300)
@@ -415,7 +429,7 @@ def preparar_entorno(nombre: str, instalar: bool = True, timeout: int = 900) -> 
     if not destino.exists():
         raise ErrorFabrica("La carpeta del proyecto no existe: {}".format(destino))
 
-    interprete = destino / "venv" / "Scripts" / "python.exe"
+    interprete = interprete_venv(destino)
     if not interprete.exists():
         codigo, salida = _ejecutar([sys.executable, "-m", "venv", "venv"], cwd=destino, timeout=300)
         if codigo != 0:

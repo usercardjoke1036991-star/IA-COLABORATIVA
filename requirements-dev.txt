@@ -1,0 +1,10 @@
+# Dependencias solo para desarrollo, pruebas y analisis de calidad.
+#
+# Instalacion:
+#   venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+
+# Suite de pruebas.
+pytest>=8.0
+
+# Cobertura en formato XML, que es el que consume SonarQube.
+pytest-cov>=5.0
