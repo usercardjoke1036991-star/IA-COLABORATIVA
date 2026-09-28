@@ -101,8 +101,12 @@ def _main_sin_pasos(tmp_path, monkeypatch, solo_lectura: bool = False) -> list:
 
 
 def test_main_avisa_si_no_puede_borrar_la_carpeta_temporal(tmp_path, monkeypatch, capsys):
-    """El resumen no puede decir "eliminada" cuando la carpeta sigue en disco."""
-    creados = _main_sin_pasos(tmp_path, monkeypatch)
+    """El resumen no puede decir "eliminada" cuando la carpeta sigue en disco.
+
+    Y el aviso trae diagnostico (cuantas entradas quedan y un ejemplo), para no
+    tener que abrir el temporal a mano en el proximo ciclo.
+    """
+    creados = _main_sin_pasos(tmp_path, monkeypatch, solo_lectura=True)
     monkeypatch.setattr(verificador, "_borrar_temporal", lambda *argumentos, **clave: False)
 
     codigo = verificador.main([])
@@ -111,6 +115,8 @@ def test_main_avisa_si_no_puede_borrar_la_carpeta_temporal(tmp_path, monkeypatch
     assert codigo == 0
     assert "AVISO: no se pudo borrar la carpeta temporal" in texto
     assert "Carpeta temporal eliminada" not in texto
+    assert "sigue habiendo 4 entradas, por ejemplo: " in texto
+    assert ".git" in texto, "el aviso no dice que es lo que no se pudo borrar"
     assert creados and creados[0].exists(), "el aviso no se corresponde con el disco"
 
 

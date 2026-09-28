@@ -655,11 +655,28 @@ def _estado_del_loop(texto: str) -> str:
     return "(sin estado)"
 
 
-def _limpiar(ruta: Path) -> None:
-    try:
-        ruta.unlink(missing_ok=True)
-    except OSError:
-        pass
+def _limpiar(ruta: Path, intentos: int = 3) -> None:
+    """Borra un fichero que ha creado el paso, y si no puede lo dice.
+
+    ``unlink`` en Windows falla con un fichero de solo lectura o bloqueado por
+    el antivirus, y el ``except OSError: pass`` lo escondia: el paso daba el OK
+    ("exportar_plan escribe el archivo") y dejaba ``.verificacion_plan.md`` en la
+    raiz del repositorio, donde el paso 7 (que vigila el registro) no mira.
+    """
+    for espera in (0.0, 0.3, 0.9)[:intentos]:
+        if espera:
+            time.sleep(espera)
+        try:
+            os.chmod(ruta, stat.S_IWRITE)
+        except OSError:  # pragma: no cover - el fichero no existe o no hay permisos
+            pass
+        try:
+            ruta.unlink(missing_ok=True)
+        except OSError:  # pragma: no cover - bloqueado: se reintenta
+            continue
+        return
+    if ruta.exists():
+        print("  AVISO: no se pudo borrar {}; borralo a mano.".format(ruta))
 
 
 # --------------------------------------------------------------------------

@@ -390,3 +390,30 @@ def test_borrar_temporal_avisa_si_no_pudo_borrar(tmp_path, monkeypatch):
 
     assert verificador._borrar_temporal(arbol, intentos=1) is False
     assert arbol.exists()
+
+
+def test_limpiar_borra_ficheros_de_solo_lectura(tmp_path, capsys):
+    """El fichero que crea el paso 5 se borra aunque este marcado de solo lectura."""
+    fichero = tmp_path / ".verificacion_plan.md"
+    fichero.write_text("plan", encoding="utf-8")
+    os.chmod(fichero, stat.S_IREAD)  # en Windows, atributo de solo lectura
+
+    verificador._limpiar(fichero)
+
+    assert not fichero.exists()
+    assert "AVISO" not in capsys.readouterr().out
+
+
+def test_limpiar_avisa_si_no_pudo_borrar(tmp_path, capsys):
+    """Si no se puede borrar (aqui, porque es una carpeta), el paso lo dice.
+
+    Antes el ``except OSError: pass`` lo escondia y el paso 5 daba el OK con el
+    fichero todavia en la raiz del repositorio.
+    """
+    estorbo = tmp_path / ".verificacion_plan.md"
+    estorbo.mkdir()
+
+    verificador._limpiar(estorbo, intentos=1)
+
+    assert "AVISO: no se pudo borrar" in capsys.readouterr().out
+    assert estorbo.exists()

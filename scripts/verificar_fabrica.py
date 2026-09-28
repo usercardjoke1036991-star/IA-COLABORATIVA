@@ -889,7 +889,15 @@ def main(argv=None) -> int:
     elif _borrar_temporal(temporal):
         print("Carpeta temporal eliminada (el registro real no se toco).")
     else:
+        # Diagnostico util: que sigue habiendo dentro (asi el proximo intento sabe
+        # si es un objeto de .git de solo lectura, un fichero bloqueado...).
+        restos = sorted(str(ruta) for ruta in temporal.rglob("*")) if temporal.exists() else []
         print("AVISO: no se pudo borrar la carpeta temporal: {}".format(temporal))
+        print(
+            "       sigue habiendo {} entradas, por ejemplo: {}".format(
+                len(restos), ", ".join(restos[:3]) or "(nada)"
+            )
+        )
         print("       borrala a mano; el registro real no se toco igualmente.")
     return 1 if fallos else 0
 

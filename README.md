@@ -581,6 +581,15 @@ Ademas hay integracion continua en `.github/workflows/ci.yml`:
 > segundos, sin haber ejecutado casi nada). El mismo cuidado hace falta en cualquier
 > otro paso que llame a un script de este repositorio.
 
+Los tres verificadores son scripts independientes (no comparten modulo) y cada uno
+lleva su propia copia del ayudante de limpieza, que quita el solo-lectura de
+`%TEMP%` (los objetos de `.git` van de solo lectura), reintenta y **avisa** en vez
+de dar por hecho que limpio. Es deuda consciente: al tocar uno hay que tocar los
+tres (`verificar_servidor.py`, `verificar_fabrica.py` y `verificar_activador.py`),
+y cada script tiene su prueba del mismo contrato
+(`tests/test_verificar_servidor.py`, `tests/test_verificar_fabrica.py` y
+`tests/test_verificar_activador.py`).
+
 ### Dependencias fijadas (lock con hashes)
 
 El CI no instala `requirements.txt` tal cual: instala `requirements.lock.txt` con

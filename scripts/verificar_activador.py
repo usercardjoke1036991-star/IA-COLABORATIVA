@@ -28,8 +28,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import shutil
+import stat
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -51,6 +54,10 @@ SENTINELA = "# mis notas de casa\n\nNO PISAR: esto lo escribio el usuario.\n"
 
 _resultados = []
 
+#: Carpeta temporal del registro aislado (``--registro-aislado``). Se borra al
+#: cerrar la verificacion: antes se quedaba en ``%TEMP%`` una por ejecucion.
+_temporal_registro = None
+
 
 def _ok(titulo: str, detalle: str = "") -> None:
     _resultados.append(True)
@@ -66,6 +73,29 @@ def _paso(numero: int, titulo: str) -> None:
     print("")
     print("-" * 70)
     print("PASO {}: {}".format(numero, titulo))
+
+
+def _borrar_temporal(ruta: Path, intentos: int = 3) -> bool:
+    """Borra una carpeta temporal de verdad y dice si lo consiguio.
+
+    Copia del ayudante de ``verificar_fabrica.py`` y ``verificar_servidor.py``
+    (los tres scripts son independientes y no comparten modulo). En Windows
+    ``shutil.rmtree(..., ignore_errors=True)`` se calla ante objetos de git de
+    solo lectura o un fichero bloqueado: aqui se quita el solo-lectura, se
+    reintenta y se informa del resultado real.
+    """
+    for espera in (0.0, 0.3, 0.9, 1.5)[:intentos]:
+        if espera:
+            time.sleep(espera)
+        for entrada in (ruta, *ruta.rglob("*")):
+            try:
+                os.chmod(entrada, stat.S_IWRITE)
+            except OSError:  # pragma: no cover - entrada ya borrada o sin permisos
+                pass
+        shutil.rmtree(ruta, ignore_errors=True)
+        if not ruta.exists():
+            return True
+    return False
 
 
 def _huellas(carpeta: Path) -> dict:
@@ -119,6 +149,8 @@ def _resumen() -> int:
         ).center(70, "=")
     )
     print("=" * 70)
+    if _temporal_registro is not None and not _borrar_temporal(_temporal_registro):
+        print("AVISO: no se pudo borrar el registro temporal: {}".format(_temporal_registro))
     return 1 if fallos else 0
 
 
@@ -138,9 +170,9 @@ def main(argv=None) -> int:
     # que hay que verificar (una carpeta cualquiera del usuario, no un proyecto).
     os.environ["ARQUITECTO_PERMITIR_EXTERNO"] = "true"
     if opciones.registro_aislado:
-        os.environ["ARQUITECTO_REGISTRO"] = str(
-            Path(tempfile.mkdtemp(prefix="registro-")) / "proyectos.json"
-        )
+        global _temporal_registro
+        _temporal_registro = Path(tempfile.mkdtemp(prefix="registro-")).resolve()
+        os.environ["ARQUITECTO_REGISTRO"] = str(_temporal_registro / "proyectos.json")
 
     print("=" * 70)
     print(" VERIFICACION DEL ACTIVADOR DE CARPETAS ".center(70, "="))
