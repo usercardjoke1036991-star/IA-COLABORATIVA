@@ -34,9 +34,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
 
@@ -55,13 +55,29 @@ jobs:
 
       - name: Verificadores del servidor MCP y de la fabrica
         if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          python scripts/verificar_servidor.py
-          python scripts/verificar_fabrica.py
+          # OJO: los verificadores escriben sus logs en stderr (es a proposito). Con
+          # $ErrorActionPreference = 'Stop' (lo que pone GitHub Actions por defecto)
+          # pwsh toma esa salida por un error terminante y aborta el paso; por eso lo
+          # bajamos a 'Continue' y comprobamos el codigo de salida a mano.
+          $ErrorActionPreference = 'Continue'
+          foreach ($script in 'scripts/verificar_servidor.py', 'scripts/verificar_fabrica.py') {
+            $texto = (python $script 2>&1 | Out-String)
+            $codigo = $LASTEXITCODE
+            Write-Output "--- $script (codigo de salida: $codigo) ---"
+            Write-Output $texto
+            if ($codigo -ne 0) {
+              $pista = (($texto -split "`n") | Where-Object { $_ -match '\[FALLO\]|Traceback|Error|Exception' } | Select-Object -Last 5) -join ' // '
+              if (-not $pista) { $pista = (($texto -split "`n") | Select-Object -Last 6) -join ' // ' }
+              Write-Output "::error title=$script::codigo de salida $codigo -> $pista"
+              exit $codigo
+            }
+          }
 
       - name: Guardar informes
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: informes-${{ matrix.os }}
           path: |
@@ -77,11 +93,11 @@ jobs:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL || 'https://sonarcloud.io' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
 

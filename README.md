@@ -352,6 +352,14 @@ Ademas hay integracion continua en `.github/workflows/ci.yml`:
 - **calidad**: analisis con `SonarSource/sonarqube-scan-action`, que solo se
   ejecuta si existe el secreto `SONAR_TOKEN`; sin el, el CI sigue en verde.
 
+> En el runner de Windows el paso de los verificadores baja `$ErrorActionPreference`
+> a `Continue` antes de llamarlos, y comprueba el codigo de salida a mano: los
+> verificadores escriben sus logs en **stderr** (es a proposito) y el `pwsh` de
+> Actions, con su `Stop` por defecto, tomaria esa salida por un error terminante y
+> abortaria el paso (sintoma: `Process completed with exit code 1` a los pocos
+> segundos, sin haber ejecutado casi nada). El mismo cuidado hace falta en cualquier
+> otro paso que llame a un script de este repositorio.
+
 Y SonarQube Cloud analiza el repositorio por su cuenta: al instalar la app de
 SonarSource queda activado el **analisis automatico**, que publica el resultado de
 cada push como check `SonarCloud Code Analysis` (con su quality gate), sin tocar
@@ -631,6 +639,7 @@ funcionan antes de conectar el modelo real.
 | Quiero verificar que la fabrica funciona antes de usarla | `venv\Scripts\python.exe scripts\verificar_fabrica.py` (crea todo en una carpeta temporal y no toca tu registro real). |
 | El CI de GitHub falla al instante, sin jobs y sin duracion | El workflow es YAML invalido (GitHub no lo valida en tu maquina). Mira *Annotations* en la ejecucion: dice la linea (`Invalid workflow file: .github/workflows/ci.yml#LNN`). Valida antes de subir con `venv\Scripts\python.exe -c "import yaml;yaml.safe_load(open('.github/workflows/ci.yml',encoding='utf-8'))"`. Un `: ` (dos puntos y espacio) sin comillas en un `run:` ya lo rompe. |
 | El check `SonarCloud Code Analysis` falla | Ese check no es el CI: es el analisis automatico de SonarQube Cloud. Entra en sonarcloud.io, mira los issues y el quality gate del proyecto; el detalle del enlace esta en el propio check. |
+| Un paso del CI muere en segundos con `Process completed with exit code 1` | `pwsh` en Actions usa `$ErrorActionPreference = 'Stop'`: si un script del repositorio escribe en **stderr** (los verificadores y los logs lo hacen a proposito), lo toma por error terminante y aborta el paso. Pon `$ErrorActionPreference = 'Continue'` al principio del `run:` y comprueba tu mismo `$LASTEXITCODE`. |
 
 Los logs del servidor van **siempre a stderr** (con `ARQUITECTO_LOG=DEBUG` para
 mas detalle), porque `stdout` esta reservado al protocolo MCP. En Cursor los ves
