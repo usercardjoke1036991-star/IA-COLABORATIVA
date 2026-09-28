@@ -180,7 +180,7 @@ herramientas.
 | `historial.py` | Memoria de cada rol, ventana acotada y persistencia en `datos/`. |
 | `config.py` | Configuracion de los dos roles y de la fabrica, desde `.env`. |
 | `rutas.py` | **Sandbox**: normaliza nombres y valida que todo quede dentro de las raices permitidas. |
-| `plantillas.py` | Catalogo de plantillas (7): archivos, notas y requirements fusionables. |
+| `plantillas.py` | Catalogo de plantillas (7): archivos, notas y requirements fusionables. Inyecta ademas la **capa de orquestacion** (`.clinerules`, `.cursorrules`, `AGENTS.md`, `.cursor/mcp.json`, `.env.example`) en todo proyecto nuevo. |
 | `herramientas_archivos.py` | Unica puerta a disco: leer, escribir, listar, buscar, mover y borrar. |
 | `fabrica.py` | Crea proyectos, aplica plantillas, `git init`, commits, registro y GitHub. |
 | `orquestador.py` | Bucle autonomo desde consola: idea -> proyecto -> plan -> codigo -> pruebas -> commit. |
@@ -231,6 +231,38 @@ la consola.
 **Se combinan**: `"python,web3"`, `"python,fastapi,playwright"`... El `README.md`,
 el `.gitignore` y el `requirements.txt` se fusionan solos (sin dependencias
 duplicadas).
+
+### Cada proyecto nace orquestado
+
+`crear_proyecto` no deja solo el andamiaje: **cualquier** combinacion de
+plantillas recibe ademas la capa de orquestacion, de modo que el proyecto se
+puede abrir directamente con Cline o Cursor y la IA ya sabe como trabajar.
+
+| Archivo | Para que sirve |
+|---|---|
+| `.clinerules` | Reglas para Cline: consultar al Arquitecto, ejecutar de verdad, auto-repararse y parar si faltan credenciales. |
+| `.cursorrules` y `.cursor/rules/arquitecto.mdc` | El mismo contrato en los formatos de Cursor. |
+| `AGENTS.md` | El mismo resumen en formato neutro (otros agentes o IDEs). |
+| `.cursor/mcp.json` | Registra `arquitecto-externo` apuntando al servidor de la fabrica (con el python de su `venv`). |
+| `.env.example` | Credenciales con los campos **vacios**, listos para rellenar. |
+
+Esas reglas obligan a la IA del IDE a:
+
+1. **Consultar al Arquitecto** (`consultar_arquitecto`) antes de una tarea nueva,
+   con la peticion literal del usuario y el contexto real del codigo.
+2. **Ejecutar de verdad** (`preparar_entorno`, `venv/Scripts/python.exe -m pytest -q`)
+   y pegar la salida real en lugar de suponer resultados.
+3. **Auto-repararse**: ante una traza real, devolversela al PROGRAMADOR externo
+   con `corregir_con_el_programador(aplicar=true)` y volver a probar.
+4. **Pararse y pedir credenciales** con el formato `BLOQUEO: CREDENCIALES`
+   (variable, donde se consigue y formato esperado), dejando antes el campo
+   vacio en `.env`: nunca se inventan claves ni mocks silenciosos.
+5. **Cerrar el ciclo** con `commit_proyecto` + `reportar_progreso`, repitiendo
+   mientras el Arquitecto conteste `estado del loop: EN CURSO` y parando en
+   `TAREA TERMINADA`.
+
+Si en un proyecto concreto no quieres esa capa, borra esos archivos; la fabrica
+los repone en el siguiente proyecto que crees.
 
 ### Reglas de seguridad de la fabrica
 

@@ -11,9 +11,12 @@ Para anadir una plantilla nueva basta con registrar otra :class:`Plantilla` en
 
 from __future__ import annotations
 
+import json
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import date
+from pathlib import Path
 from typing import Dict, List
 
 import rutas
@@ -84,6 +87,30 @@ venv\Scripts\python.exe -m pip install -r requirements.txt
 2. El ARQUITECTO (IA externa) definio el plan; el PROGRAMADOR lo implemento.
 3. Cada bloque de trabajo se cierra con un informe de progreso.
 
+## Credenciales y puntos de parada
+
+La IA deja preparados los campos y **para** cuando necesita un dato tuyo:
+
+1. Copia `.env.example` a `.env` (el `.env` no se sube a git).
+2. Rellena solo las variables que te pida: en el chat vera el aviso
+   `BLOQUEO: CREDENCIALES` con la lista exacta de variables y donde
+   conseguirlas.
+3. Responde "listo" y el trabajo continua desde ese mismo punto.
+
+Nunca se inventan claves ni se dejan simulaciones silenciosas.
+
+## Orquestacion con IA (Arquitecto externo + IDE)
+
+Este proyecto nace enchufado a la fabrica de IA colaborativa:
+
+- `.clinerules`, `.cursorrules` y `.cursor/rules/arquitecto.mdc`: reglas que
+  obligan a la IA del IDE a consultar al ARQUITECTO antes de programar, a
+  ejecutar las pruebas de verdad, a auto-repararse y a pararse si faltan
+  credenciales.
+- `AGENTS.md`: el mismo resumen en formato neutro.
+- `.cursor/mcp.json`: registro del servidor MCP `arquitecto-externo` que
+  gobierna el loop (el proyecto se trabaja con `proyecto="__NOMBRE__"`).
+
 ## Estado
 
 - [ ] Primer alcance funcional
@@ -109,6 +136,216 @@ def _sustituir(texto: str, nombre: str, descripcion: str, paquete: str, claves: 
         .replace("__FECHA__", date.today().isoformat())
         .replace("__PLANTILLAS__", ", ".join(claves) or "base")
     )
+
+
+# --------------------------------------------------------------------------
+# Orquestacion: todo proyecto nuevo nace enchufado al Arquitecto externo
+# --------------------------------------------------------------------------
+def _ruta_posix(ruta) -> str:
+    """Ruta con barras normales: JSON valido y sin escapes rotos."""
+    return Path(ruta).as_posix()
+
+
+def _interprete_mcp() -> str:
+    """Interprete que arranca el servidor MCP (el venv de la fabrica si existe).
+
+    El servidor MCP necesita las dependencias del proyecto orquestador, asi que
+    se prefiere el python de su ``venv`` y solo se cae a ``python`` del PATH si
+    ese entorno todavia no existe.
+    """
+    raiz = rutas.raiz_proyecto()
+    piezas = (
+        ("venv", "Scripts", "python.exe")
+        if os.name == "nt"
+        else ("venv", "bin", "python")
+    )
+    candidato = raiz.joinpath(*piezas)
+    return _ruta_posix(candidato) if candidato.exists() else "python"
+
+
+def _servidor_mcp() -> str:
+    """Ruta del servidor MCP de la fabrica que gobierna la orquestacion."""
+    return _ruta_posix(rutas.raiz_proyecto() / "arquitecto_mcp.py")
+
+
+#: Reglas que recibe la IA del IDE dentro de cada proyecto nuevo.
+REGLAS_ORQUESTACION = r"""# Orquestacion: IA colaborativa (Arquitecto externo + fabrica)
+
+Proyecto: __NOMBRE__ (slug de la fabrica). __DESCRIPCION__
+
+Eres el PROGRAMADOR PRINCIPAL: la IA del IDE que escribe TODO el codigo de este
+proyecto. Existe ademas una IA externa, el ARQUITECTO (DeepSeek), expuesta como
+las herramientas MCP del servidor `arquitecto-externo`, y una FABRICA DE
+PROYECTOS que gestiona carpetas, git y GitHub. Reparto de papeles: el ARQUITECTO
+dimensiona, decide y valida; TU construyes.
+
+Trabaja SIEMPRE contra la fabrica indicando el proyecto:
+
+- `proyecto="__NOMBRE__"` en todas las herramientas de archivos y de git.
+- Rutas relativas al proyecto (`src/...`, `tests/...`), nunca absolutas.
+
+## 1. Antes de programar: pregunta al Arquitecto
+
+1. Situate: `ver_proyecto(proyecto="__NOMBRE__")` (no gasta tokens).
+2. Llama a `consultar_arquitecto` con la peticion LITERAL del usuario en
+   `idea_del_usuario` y el contexto real en `contexto_del_codigo` (stack,
+   estructura, restricciones). Nunca metas credenciales ahi.
+3. Sigue su plan paso a paso, sin inventar pasos extra. Si algo es inviable,
+   dilo con `reportar_progreso` y el `bloqueo` concreto en vez de improvisar.
+4. Cuenta al usuario en 2-3 lineas que consultaste al arquitecto y que propone.
+
+## 2. Si faltan credenciales: PARA y pide (nunca las inventes)
+
+Cuando una tarea necesite una clave, token, cadena de conexion o un servicio
+externo (API, base de datos, cuenta, dominio, tarjeta...):
+
+1. NO inventes valores, NO dejes mocks silenciosos, NO des la tarea por hecha.
+2. Deja el enganche ya programado y los campos VACIOS preparados:
+   - `.env.example`: variable documentada (esto si se versiona).
+   - `.env`: `NOMBRE_VARIABLE=` (vacio; `.env` nunca se sube a git).
+3. Commit del trabajo parcial (`commit_proyecto`) y PARA el loop con este
+   formato exacto, para que el usuario solo tenga que rellenar y decir "listo":
+
+   BLOQUEO: CREDENCIALES
+   Necesito que rellenes en `.env`:
+   - `VARIABLE_1` -> donde se consigue (URL exacta) y formato esperado.
+   - `VARIABLE_2` -> ...
+   Cuando esten puestas, dime "listo" y continuo justo desde aqui.
+
+4. Registralo tambien en `reportar_progreso(bloqueo="CREDENCIALES: ...")`.
+5. Al recibirlas: no las repitas en tu respuesta ni las mandes al arquitecto;
+   leelas del `.env` y continua.
+
+## 3. Ejecutar y comprobar (tienes acceso a esta maquina)
+
+- Prepara el entorno si hace falta: `preparar_entorno(proyecto="__NOMBRE__")`.
+- Ejecuta comandos y pruebas de verdad en la terminal, por ejemplo:
+  `venv/Scripts/python.exe -m pytest -q` (o el comando del stack).
+- Pide confirmacion al usuario antes de acciones destructivas o irreversibles
+  (borrados masivos, `git push --force`, instalar software del sistema).
+- No anuncies un resultado sin haberlo ejecutado: pega la salida real.
+
+## 4. Auto-reparacion: los errores reales, al PROGRAMADOR externo
+
+Si una prueba o un comando falla:
+
+1. Copia la traza completa (no un resumen).
+2. `corregir_con_el_programador(proyecto="__NOMBRE__", error=<traza>,
+   intento=N, aplicar=true)` y vuelve a ejecutar las pruebas.
+3. Si sigue en rojo tras 2-3 intentos, para y reporta el `bloqueo` con la traza
+   exacta, pidiendo ayuda al usuario o al arquitecto.
+
+## 5. Loop continuo hasta cerrar la tarea
+
+Por cada bloque de trabajo:
+
+6. `commit_proyecto(proyecto="__NOMBRE__", mensaje="feat: ...")`.
+7. `reportar_progreso(resumen_de_lo_hecho=..., prompt_original=...,
+   archivos_tocados=..., bloqueo=...)`.
+8. Aplica los siguientes pasos que devuelva el arquitecto y repite 6-8 mientras
+   diga `estado del loop: EN CURSO`.
+9. Para cuando diga `estado del loop: TAREA TERMINADA` (o salga
+   `[[ARQUITECTO: FIN]]`): verifica los criterios de aceptacion, ejecuta la
+   verificacion final y entrega al usuario el resumen y como probarlo.
+
+## 6. Publicar (solo si el usuario lo pide)
+
+`publicar_en_github(proyecto="__NOMBRE__")` necesita `gh` instalado y con sesion
+(`gh auth login`). Si no esta, explica al usuario como instalarlo.
+
+## Prohibiciones
+
+- No llames al arquitecto por cambios triviales (typos, formato, imports).
+- No incluyas claves, tokens ni secretos en el contexto que le envies.
+- No escribas fuera de `proyectos/` ni dentro de `.git`.
+- No dejes una tarea a medias sin reportar el bloqueo.
+"""
+
+
+#: Resumen neutro del mismo protocolo (lo leen Cursor, Cline y otras IAs).
+AGENTS_MD = r"""# __NOMBRE__ - contexto para agentes (IA colaborativa)
+
+__DESCRIPCION__
+
+Este proyecto lo mantiene un equipo de dos IAs:
+
+- **ARQUITECTO externo** (herramientas MCP `arquitecto-externo`): dimensiona,
+  valida y recomienda cambios. No escribe codigo final.
+- **PROGRAMADOR** (la IA del IDE, tu): escribe TODO el codigo y ejecuta.
+
+Las reglas completas estan en `.clinerules` (Cline) y en `.cursorrules` /
+`.cursor/rules/arquitecto.mdc` (Cursor). Resumen operativo:
+
+1. Antes de una tarea nueva o un cambio amplio: `consultar_arquitecto`.
+2. Trabaja siempre con `proyecto="__NOMBRE__"` y rutas relativas.
+3. Si falta una credencial: deja la variable vacia en `.env`, PARA y pide el
+   valor al usuario con el formato `BLOQUEO: CREDENCIALES`. Nunca inventes
+   claves ni dejes mocks silenciosos.
+4. El arquitecto decide y la IA del IDE construye; los errores reales se
+   devuelven con `corregir_con_el_programador(aplicar=true)`.
+5. Cierra cada bloque con `commit_proyecto` + `reportar_progreso` y continua
+   mientras el loop diga `estado del loop: EN CURSO`.
+"""
+
+#: Plantilla de credenciales: campos vacios listos para rellenar.
+ENV_EJEMPLO = r"""# Credenciales y ajustes locales de __NOMBRE__
+# Copia este archivo a .env y rellena SOLO lo que necesites (el .env real no se
+# sube a git).
+#
+# Regla del equipo: si falta una credencial, la IA deja aqui la variable vacia,
+# PARA el trabajo y pide el valor al usuario. Nunca se inventan claves.
+
+# --- Modelos (solo si el proyecto llama a un LLM) ---
+DEEPSEEK_API_KEY=
+OPENROUTER_API_KEY=
+OPENAI_API_KEY=
+
+# --- Servicios del proyecto (descomenta y anade los tuyos) ---
+# DATABASE_URL=
+# API_BASE_URL=
+# TELEGRAM_BOT_TOKEN=
+
+# --- Orquestacion (las lee el servidor MCP de la fabrica) ---
+ARQUITECTO_PROVIDER=deepseek
+ARQUITECTO_MODEL=deepseek-reasoner
+ARQUITECTO_EJECUTOR_MODEL=deepseek-chat
+# ARQUITECTO_MOCK=true   # modo simulado: sin API key y sin coste (solo pruebas)
+"""
+
+
+def archivos_de_orquestacion(
+    nombre: str, descripcion: str, paquete: str, claves: List[str]
+) -> Dict[str, str]:
+    """Archivos comunes que enchufan un proyecto nuevo al Arquitecto externo.
+
+    Se anaden a cualquier combinacion de plantillas (salvo que la propia
+    plantilla ya defina ese archivo, en cuyo caso gana la plantilla).
+    """
+    cuerpo = _sustituir(REGLAS_ORQUESTACION, nombre, descripcion, paquete, claves)
+    mdc = (
+        "---\n"
+        "description: Orquestacion con el Arquitecto externo (loop de IA colaborativa)\n"
+        "globs:\n"
+        "alwaysApply: true\n"
+        "---\n\n"
+    ) + cuerpo
+    registro = {
+        "mcpServers": {
+            "arquitecto-externo": {
+                "command": _interprete_mcp(),
+                "args": [_servidor_mcp()],
+                "env": {"ARQUITECTO_LOG": "INFO"},
+            }
+        }
+    }
+    return {
+        ".clinerules": cuerpo,
+        ".cursorrules": cuerpo,
+        ".cursor/rules/arquitecto.mdc": mdc,
+        ".cursor/mcp.json": json.dumps(registro, indent=2, ensure_ascii=False) + "\n",
+        "AGENTS.md": _sustituir(AGENTS_MD, nombre, descripcion, paquete, claves),
+        ".env.example": _sustituir(ENV_EJEMPLO, nombre, descripcion, paquete, claves),
+    }
 
 
 # --------------------------------------------------------------------------
@@ -794,8 +1031,18 @@ def construir(
             for nota in plantilla.notas
         )
 
+    for ruta_orq, contenido_orq in archivos_de_orquestacion(
+        limpio, descripcion, paquete, claves_efectivas
+    ).items():
+        archivos.setdefault(ruta_orq, contenido_orq)
+
     if requirements:
         archivos["requirements.txt"] = _fusionar_requirements(requirements)
+
+    notas.append(
+        "Orquestacion: el proyecto ya trae reglas para la IA (.clinerules, "
+        ".cursorrules, AGENTS.md) y .cursor/mcp.json; copia .env.example a .env."
+    )
 
     return Andamiaje(
         archivos=archivos,
