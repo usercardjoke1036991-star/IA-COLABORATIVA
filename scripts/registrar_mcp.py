@@ -25,6 +25,9 @@ import sys
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
+if str(RAIZ) not in sys.path:  # rutas vive en la raiz del proyecto
+    sys.path.insert(0, str(RAIZ))
+
 SERVIDOR = RAIZ / "arquitecto_mcp.py"
 NOMBRE_POR_DEFECTO = "arquitecto-externo"
 
@@ -75,7 +78,11 @@ def _destino_validado(ruta: Path) -> Path:
             "solo se escriben archivos .json, no '{}'".format(destino.name)
         )
     permitidas = _raices_permitidas()
-    if not any(destino.is_relative_to(raiz) for raiz in permitidas):
+    # Import perezoso: el script se puede lanzar suelto y solo necesita el
+    # sandbox de rutas cuando de verdad va a comparar carpetas.
+    import rutas
+
+    if not any(rutas.esta_dentro(destino, raiz) for raiz in permitidas):
         raise ValueError(
             "destino fuera de las carpetas permitidas: {}\nPermitido: {}".format(
                 destino, ", ".join(str(raiz) for raiz in permitidas)

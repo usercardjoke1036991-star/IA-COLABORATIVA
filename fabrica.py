@@ -54,14 +54,20 @@ def raices_registro() -> List[Path]:
 def _exigir_raiz_permitida(destino: Path) -> Path:
     """Comprueba que ``destino`` cuelga de una raiz permitida.
 
-    Es el saneado central: la ruta tiene que estar resuelta y contenida en
-    :func:`raices_registro`. Si no, se lanza :class:`ErrorFabrica` antes de
-    tocar el disco.
+    Es el saneado central: la ruta tiene que caer dentro de alguna de las
+    carpetas de :func:`raices_registro`. Si no, se lanza :class:`ErrorFabrica`
+    antes de tocar el disco.
+
+    La comparacion la hace :func:`rutas.esta_dentro`, que canoniza los dos
+    textos antes de mirarlos. La misma carpeta se puede escribir de varias
+    maneras (nombre corto 8.3 del temporal del runner, enlaces, mayusculas) y
+    un ``is_relative_to`` sobre el texto en crudo rechaza una ruta valida solo
+    porque llega sin resolver: eso fue lo que tumbo el CI en Windows.
     """
     if configuracion.cargar_fabrica().permitir_externo:
         return destino
     permitidas = raices_registro()
-    if any(destino.is_relative_to(raiz) for raiz in permitidas):
+    if any(rutas.esta_dentro(destino, raiz) for raiz in permitidas):
         return destino
     raise ErrorFabrica(
         "ARQUITECTO_REGISTRO apunta fuera de las raices permitidas: {}\n"

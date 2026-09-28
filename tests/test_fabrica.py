@@ -11,6 +11,7 @@ import fabrica
 import herramientas_archivos as archivos
 import plantillas
 import rutas
+from conftest import alias_de_carpeta
 
 if not fabrica.hay_git():  # pragma: no cover - runner sin git
     pytest.skip("git no esta disponible en esta maquina", allow_module_level=True)
@@ -251,3 +252,31 @@ def test_guardar_registro_no_obedece_a_una_ruta_manipulada(sandbox, monkeypatch)
         fabrica.guardar_registro({"demo": {}})
 
     assert not colado.exists()
+
+
+# --------------------------------------------------------------------------
+# Regresion del runner de Windows: la misma carpeta escrita de otra forma
+# --------------------------------------------------------------------------
+def test_guardar_registro_admite_el_texto_sin_resolver(sandbox, monkeypatch):
+    """El registro puede llegar sin resolver y con otro nombre para la misma carpeta.
+
+    ``scripts/verificar_fabrica.py`` apunta ``fabrica.RUTA_REGISTRO`` al
+    temporal tal cual se lo devuelve ``tempfile.mkdtemp()``. En el runner de
+    Windows ese texto trae el nombre corto 8.3 (``C:\\Users\\RUNNER~1\\...``)
+    mientras que las raices permitidas se resuelven al nombre largo
+    (``runneradmin``): misma carpeta, dos textos. Comparar los textos en crudo
+    (``is_relative_to``) rechazaba el registro y tumbaba el CI; el ayudante
+    ``alias_de_carpeta`` reproduce el escenario con un enlace.
+    """
+    alias = alias_de_carpeta(Path(sandbox))
+    if alias is None:
+        pytest.skip("esta maquina no ofrece otra forma de nombrar la carpeta")
+    monkeypatch.setenv("ARQUITECTO_CARPETA_PROYECTOS", str(alias))
+    monkeypatch.delenv("ARQUITECTO_REGISTRO", raising=False)
+    monkeypatch.setattr(fabrica, "RUTA_REGISTRO", alias / "datos" / "proyectos.json")
+
+    fabrica.guardar_registro({"demo": {"nombre": "demo", "plantillas": []}})
+
+    assert (alias / "datos" / "proyectos.json").exists()
+    assert fabrica.cargar_registro()["demo"]["nombre"] == "demo"
+    assert rutas.esta_dentro(fabrica.ruta_registro(), Path(sandbox))

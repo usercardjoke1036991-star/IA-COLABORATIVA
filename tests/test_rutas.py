@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 import rutas
+from conftest import alias_de_carpeta
 from rutas import ErrorRuta, normalizar_nombre, resolver_en_proyecto
 
 
@@ -86,3 +87,21 @@ def test_ruta_de_proyecto_crea_la_carpeta(sandbox):
 
     assert carpeta.is_dir()
     assert carpeta.name == "mi-proyecto"
+
+
+def test_esta_dentro_admite_la_misma_carpeta_escrita_de_otra_forma(sandbox):
+    """Un enlace (o un nombre 8.3) apunta a la misma carpeta: sigue estando dentro.
+
+    En el runner de Windows el temporal se escribe con el nombre corto
+    (``...\\RUNNER~1\\...``) y la raiz permitida se resuelve al largo
+    (``...\\runneradmin\\...``), de modo que las dos escrituras tienen que
+    valer igual.
+    """
+    real = Path(sandbox).resolve()
+    alias = alias_de_carpeta(real)
+    if alias is None:
+        pytest.skip("esta maquina no ofrece otra forma de nombrar la carpeta")
+
+    assert rutas.esta_dentro(alias / "proyectos" / "nuevo.txt", real / "proyectos")
+    assert rutas.esta_dentro(alias / "registro.json", real)
+    assert not rutas.esta_dentro(alias / "fuera.txt", real / "proyectos")

@@ -382,7 +382,9 @@ def main(argv=None) -> int:
     analizador.add_argument("--conservar", action="store_true", help="no borra la carpeta temporal")
     opciones = analizador.parse_args(argv)
 
-    temporal = Path(tempfile.mkdtemp(prefix="verificacion-fabrica-"))
+    # Se guarda ya canonico: asi los avisos y la comprobacion de raices hablan
+    # del mismo texto aunque el sistema tenga dos nombres para el temporal.
+    temporal = Path(tempfile.mkdtemp(prefix="verificacion-fabrica-")).resolve()
     os.environ["ARQUITECTO_CARPETA_PROYECTOS"] = str(temporal)
     os.environ["ARQUITECTO_LOG"] = "WARNING"
     os.environ["ARQUITECTO_PERSISTIR"] = "0"
