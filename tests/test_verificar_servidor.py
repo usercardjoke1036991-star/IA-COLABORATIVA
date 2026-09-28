@@ -417,3 +417,46 @@ def test_limpiar_avisa_si_no_pudo_borrar(tmp_path, capsys):
 
     assert "AVISO: no se pudo borrar" in capsys.readouterr().out
     assert estorbo.exists()
+
+
+# --------------------------------------------------------------------------
+# El paso 4 no puede depender de que la maquina tenga el IDE instalado
+# --------------------------------------------------------------------------
+def _sin_cline(monkeypatch):
+    """Deja el detector de Cline a cero: la prueba no depende de esta maquina."""
+    import activacion
+
+    monkeypatch.setattr(activacion._registrador(), "_destinos_cline", lambda: [])
+    return activacion
+
+
+def test_paso_global_no_falla_si_la_maquina_no_tiene_cursor(tmp_path, monkeypatch, capsys):
+    """En un runner limpio no existe ``~/.cursor``: eso no es un fallo del repo.
+
+    El paso miraba la carpeta personal del usuario en duro, asi que el CI de
+    Windows (que no tiene Cursor instalado) fallaba siempre con "faltan las
+    reglas globales de Cursor". Es el mismo caso que su punto 2 ya contemplaba:
+    si no hay Cursor, no hay nada que comprobar.
+    """
+    activacion = _sin_cline(monkeypatch)
+    monkeypatch.setattr(activacion, "raiz_cursor", lambda: tmp_path / "sin-cursor" / ".cursor")
+
+    assert verificador.paso_global() is True
+
+    texto = capsys.readouterr().out
+    assert "no hay Cursor instalado en esta maquina" in texto
+    assert "[FALLO]" not in texto
+
+
+def test_paso_global_si_falla_si_hay_cursor_sin_reglas(tmp_path, monkeypatch, capsys):
+    """Cursor instalado (existe ``~/.cursor``) sin arranque global: fallo real."""
+    activacion = _sin_cline(monkeypatch)
+    cursor = tmp_path / ".cursor"
+    cursor.mkdir()
+    monkeypatch.setattr(activacion, "raiz_cursor", lambda: cursor)
+
+    assert verificador.paso_global() is False
+
+    texto = capsys.readouterr().out
+    assert "faltan las reglas globales de Cursor" in texto
+

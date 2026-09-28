@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -47,6 +48,52 @@ from arquitecto import Arquitecto
 from ejecutor import Ejecutor
 
 ANCHO = 72
+
+#: Tope duro de turnos: un valor que llega de fuera (la consola o el ``.env``) no
+#: puede encargar un bucle sin fin.
+TURNOS_MAXIMOS = 50
+
+#: Forma que puede tener un valor que viaje como argumento de linea de comandos:
+#: no empieza por ``-`` (si no, el CLI de destino lo leeria como una OPCION) y no
+#: lleva ningun byte NUL (corta la cadena al llegar al sistema).
+#: Es el saneado que exige la regla ``pythonsecurity:S8705`` ("Agentic workflows
+#: should not be vulnerable to argument injection attacks", CWE-88).
+ARGUMENTO_VALIDO = re.compile(r"[^-\x00][^\x00]*")
+
+
+def _turnos_validados(valor) -> int:
+    """Convierte en entero el numero de turnos y lo acota a un rango sensato.
+
+    Raises:
+        ValueError: si no es un numero entero o se sale de ``1..TURNOS_MAXIMOS``.
+    """
+    try:
+        turnos = int(valor)
+    except (TypeError, ValueError):
+        raise ValueError("los turnos tienen que ser un numero entero: {!r}".format(valor))
+    if not 1 <= turnos <= TURNOS_MAXIMOS:
+        raise ValueError(
+            "los turnos tienen que estar entre 1 y {}: {}".format(TURNOS_MAXIMOS, turnos)
+        )
+    return turnos
+
+
+def _argumento_seguro(valor, nombre: str) -> str:
+    """Valida un texto que va a viajar como argumento de linea de comandos.
+
+    Args:
+        valor: texto a validar (suele venir de fuera: el usuario o el ``.env``).
+        nombre: como se llama en el mensaje de error, para poder arreglarlo.
+
+    Raises:
+        ValueError: si esta vacio, empieza por ``-`` o lleva un byte NUL.
+    """
+    texto = str(valor)
+    if not ARGUMENTO_VALIDO.fullmatch(texto):
+        raise ValueError(
+            "{} no puede viajar como argumento: {!r}".format(nombre, texto[:60])
+        )
+    return texto
 
 
 @dataclass
@@ -350,19 +397,20 @@ class Orquestador:
         if self.plan_inicial() is None:
             return self.resultado
 
-        for numero in range(1, max(1, turnos) + 1):
+        cuantos = _turnos_validados(turnos)
+        for numero in range(1, cuantos + 1):
             self.resultado.turnos = numero
             comando = [
-                self.cfg.cline_comando,
+                _argumento_seguro(self.cfg.cline_comando, "el ejecutable de cline"),
                 "--cwd",
-                self.resultado.ruta,
+                _argumento_seguro(self.resultado.ruta, "la ruta del proyecto"),
                 "--auto-approve",
                 "true" if self.cfg.cline_auto else "false",
                 "--timeout",
                 "1800",
-                self.prompt_cline(numero, turnos),
+                _argumento_seguro(self.prompt_cline(numero, cuantos), "el prompt del turno"),
             ]
-            _paso("TURNO {}/{} delegado a '{}'".format(numero, turnos, self.cfg.cline_comando))
+            _paso("TURNO {}/{} delegado a '{}'".format(numero, cuantos, self.cfg.cline_comando))
             try:
                 codigo, salida, error = procesos.ejecutar(
                     comando, cwd=self.resultado.ruta, timeout=3600

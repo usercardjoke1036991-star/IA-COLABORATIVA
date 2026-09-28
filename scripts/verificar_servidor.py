@@ -382,10 +382,18 @@ def paso_global() -> bool:
         return False
 
     valido = True
+    casa = activacion.raiz_cursor()
 
-    # 1) Reglas globales de Cursor: son el disparador del arranque.
-    reglas = activacion.raiz_cursor() / "rules" / activacion.NOMBRE_REGLAS_GLOBALES
-    if not reglas.is_file():
+    # 1) Reglas globales de Cursor: son el disparador del arranque. Si en esta
+    # maquina no hay Cursor instalado (ni siquiera existe su carpeta personal)
+    # no hay nada que comprobar: es el mismo caso que el punto 2, y asi el
+    # verificador tambien vale en un runner de CI limpio, donde no hay Cursor.
+    # Si la carpeta EXISTE y las reglas faltan o estan incompletas, si es un
+    # fallo de verdad: ese es el caso que este paso protege.
+    reglas = casa / "rules" / activacion.NOMBRE_REGLAS_GLOBALES
+    if not casa.exists():
+        _ok("no hay Cursor instalado en esta maquina (nada que comprobar)", str(casa))
+    elif not reglas.is_file():
         _fallo("faltan las reglas globales de Cursor", str(reglas))
         valido = False
     else:
@@ -398,7 +406,6 @@ def paso_global() -> bool:
 
     # 2) Servidor MCP en la configuracion personal de cada agente.
     registrador = activacion._registrador()
-    casa = activacion.raiz_cursor()
     destinos = [casa / "mcp.json"] + registrador._destinos_cline()
     presentes = [ruta for ruta in destinos if ruta.exists()]
     if not presentes and not casa.exists():

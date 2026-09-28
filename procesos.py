@@ -26,6 +26,10 @@ Solucion: un unico punto de salida, :func:`ejecutar`, que
    nietos, cada uno con su propia consola), en POSIX lo lanza en su propio grupo
    y mata al grupo entero. Despues libera las tuberias sin quedarse esperando a
    un proceso rebelde.
+5. sanea los argumentos antes de lanzar: un ``argv[0]`` que empiece por ``-`` se
+   leeria como una opcion (inyeccion de argumentos) y un byte NUL corta la
+   cadena al llegar al sistema. Es la unica puerta, asi que ningun llamador
+   puede olvidarse de validar.
 """
 
 from __future__ import annotations
@@ -35,7 +39,7 @@ import os
 import signal
 import subprocess
 from pathlib import Path
-from typing import Dict, Sequence, Tuple
+from typing import Dict, List, Sequence, Tuple
 
 #: Segundos que se espera a un hijo ya matado antes de dar sus tuberias por perdidas.
 ESPERA_TRAS_MATAR = 5.0
@@ -230,6 +234,34 @@ def kwargs_proceso(extra: Dict[str, str] | None = None) -> Dict[str, object]:
     }
 
 
+def _validar_argumentos(comando: Sequence[str]) -> List[str]:
+    """Sanea la lista de argumentos antes de entregarsela al sistema.
+
+    Aunque aqui NUNCA se interpreta una linea de comandos (``shell`` esta
+    apagado), un valor que venga de fuera (la idea del usuario, el plan del
+    arquitecto, una ruta del ``.env``) puede colarse como OPCION si empieza por
+    ``-``, y un byte NUL corta la cadena al llegar al sistema. Se valida en este
+    unico punto de salida de procesos para que ningun llamador pueda olvidarlo.
+
+    Raises:
+        ValueError: si el comando esta vacio, si el programa a ejecutar empieza
+            por ``-`` o si algun argumento lleva un byte NUL.
+    """
+    piezas = [str(pieza) for pieza in comando]
+    if not piezas:
+        raise ValueError("comando vacio: falta el programa a ejecutar")
+    if piezas[0].startswith("-"):
+        raise ValueError(
+            "el programa a ejecutar no puede empezar por '-': {!r}".format(piezas[0])
+        )
+    for pieza in piezas:
+        if "\x00" in pieza:
+            raise ValueError(
+                "un argumento lleva un byte NUL y no se puede ejecutar: {!r}".format(pieza)
+            )
+    return piezas
+
+
 def ejecutar(
     comando: Sequence[str],
     cwd,
@@ -248,11 +280,12 @@ def ejecutar(
     Raises:
         FileNotFoundError: si el ejecutable no existe o no esta en el PATH.
         subprocess.TimeoutExpired: si el hijo no termina dentro de ``timeout``.
+        ValueError: si el comando no pasa el saneado de :func:`_validar_argumentos`.
     """
     job = _abrir_job()
     try:
         proceso = subprocess.Popen(
-            [str(pieza) for pieza in comando],
+            _validar_argumentos(comando),
             cwd=str(cwd),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

@@ -112,6 +112,34 @@ def test_ejecutable_inexistente_avisa(tmp_path):
         procesos.ejecutar(["no-existe-este-programa-xyz", "--version"], cwd=tmp_path, timeout=5)
 
 
+def test_un_comando_vacio_se_rechaza(tmp_path):
+    with pytest.raises(ValueError):
+        procesos.ejecutar([], cwd=tmp_path, timeout=5)
+
+
+def test_un_programa_que_empieza_por_guion_se_rechaza(tmp_path):
+    """argv[0] nunca es una opcion: eso es la puerta de la inyeccion de argumentos."""
+    with pytest.raises(ValueError):
+        procesos.ejecutar(["--yolo", "algo"], cwd=tmp_path, timeout=5)
+
+
+def test_un_argumento_con_byte_nulo_se_rechaza(tmp_path):
+    """El NUL corta la cadena al llegar al sistema: se corta antes, aqui."""
+    with pytest.raises(ValueError):
+        procesos.ejecutar([sys.executable, "-c", "pass\x00--yolo"], cwd=tmp_path, timeout=5)
+
+
+def test_el_saneado_no_toca_los_argumentos_legitimos(tmp_path):
+    """Solo se valida argv[0] y el NUL: un texto con guion sigue llegando igual."""
+    codigo, salida, _ = procesos.ejecutar(
+        [sys.executable, "-c", "import sys; print(sys.argv[1])", "-no-es-una-opcion"],
+        cwd=tmp_path,
+        timeout=30,
+    )
+    assert codigo == 0
+    assert salida.strip() == "-no-es-una-opcion"
+
+
 def test_fabrica_combina_salida_y_error(tmp_path):
     codigo, salida = fabrica._ejecutar(  # noqa: SLF001 (se prueba el contrato interno)
         [sys.executable, "-c", "import sys; print('out'); print('err', file=sys.stderr)"],
@@ -157,7 +185,10 @@ def _sigue_vivo(pid: int) -> bool:
         return str(pid) in salida
     if Path("/proc/{}".format(pid)).exists():
         return True
-    codigo, _ = procesos.ejecutar(["ps", "-p", str(pid)], cwd=RAIZ, timeout=30)
+    # ejecutar() devuelve (codigo, salida, error): la rama de Windows ya lo tenia
+    # en cuenta y esta no, asi que en Linux la prueba reventaba con "too many
+    # values to unpack" justo cuando el proceso YA habia muerto (el caso bueno).
+    codigo, _, _ = procesos.ejecutar(["ps", "-p", str(pid)], cwd=RAIZ, timeout=30)
     return codigo == 0
 
 
