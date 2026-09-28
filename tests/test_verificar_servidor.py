@@ -5,8 +5,13 @@ despues borra la carpeta temporal. El peligro esta en el registro: con
 ``ARQUITECTO_CARPETA_PROYECTOS`` redirigido pero ``ARQUITECTO_REGISTRO`` sin
 tocar, la verificacion apuntaba al registro REAL y dejaba en el la ficha de un
 temporal ya borrado (``ARQUITECTO_PERSISTIR=0`` solo protege el historial, no
-``datos/proyectos.json``). Estas pruebas fijan que el paso nunca escribe en el
-registro real y que devuelve el entorno como estaba.
+``datos/proyectos.json``).
+
+Estas pruebas fijan las dos redes: el aislamiento interno del paso 6, que no
+escribe en el registro que la verificacion tenia al empezar, y el cinturon del
+script (``entorno_aislado``), que apunta a un temporal propio cuando nadie ha
+redirigido nada —el caso del CI— y que el paso 7 vigila con la huella SHA-256
+del registro real.
 """
 
 from __future__ import annotations
@@ -15,6 +20,8 @@ import importlib.util
 import os
 import tempfile
 from pathlib import Path
+
+import pytest
 
 import fabrica
 import rutas
@@ -157,3 +164,191 @@ def test_el_paso_informa_si_la_respuesta_del_tool_no_es_la_esperada(sandbox):
     servidor._tool_manager = _GestorRoto()
 
     assert verificador.paso_dependencias_mcp(servidor) is False
+
+
+# --------------------------------------------------------------------------
+# El cinturon del script: ``entorno_aislado``
+# --------------------------------------------------------------------------
+def _entorno() -> dict:
+    return {clave: os.environ.get(clave) for clave in verificador.ENTORNO_ISLAMIENTO}
+
+
+def _sin_redireccion(monkeypatch) -> None:
+    """Deja el entorno como una maquina normal: nada redirigido a mano."""
+    for clave in verificador.ENTORNO_ISLAMIENTO:
+        monkeypatch.delenv(clave, raising=False)
+
+
+def test_el_cinturon_aisla_registro_y_carpeta_sin_redireccion(sandbox, monkeypatch):
+    """Sin nada redirigido el script se apunta a un temporal suyo y lo borra."""
+    monkeypatch.setattr(fabrica, "RUTA_REGISTRO", sandbox / "datos" / "proyectos.json")
+    _sin_redireccion(monkeypatch)
+
+    with verificador.entorno_aislado() as temporal:
+        assert temporal is not None
+        assert temporal.name.startswith(verificador.PREFIJO_TEMPORAL)
+        registro = Path(os.environ["ARQUITECTO_REGISTRO"])
+        carpeta = Path(os.environ["ARQUITECTO_CARPETA_PROYECTOS"])
+        assert rutas.esta_dentro(carpeta, temporal)
+        assert rutas.esta_dentro(registro, temporal)
+        assert registro.name == verificador.NOMBRE_REGISTRO_AISLADO
+        # La fabrica acepta ese registro: no se sale de sus raices permitidas.
+        assert rutas.esta_dentro(fabrica.ruta_registro(), temporal)
+
+    assert not temporal.exists(), "el cinturon dejo su temporal en disco"
+    assert not (sandbox / "datos").exists()
+    assert _entorno() == {clave: None for clave in verificador.ENTORNO_ISLAMIENTO}
+
+
+def test_el_cinturon_respeta_lo_que_ya_venia_redirigido(sandbox):
+    """En el CI y en las pruebas el entorno ya viene aislado: no se toca."""
+    antes = _entorno()
+
+    with verificador.entorno_aislado() as temporal:
+        assert temporal is None
+        assert _entorno() == antes
+
+    assert _entorno() == antes
+
+
+def test_el_cinturon_rellena_solo_la_carpeta_que_falta(sandbox, monkeypatch):
+    monkeypatch.delenv("ARQUITECTO_CARPETA_PROYECTOS", raising=False)
+    registro = os.environ["ARQUITECTO_REGISTRO"]
+
+    with verificador.entorno_aislado() as temporal:
+        assert temporal is not None
+        assert os.environ["ARQUITECTO_REGISTRO"] == registro
+        assert rutas.esta_dentro(Path(os.environ["ARQUITECTO_CARPETA_PROYECTOS"]), temporal)
+
+    assert os.environ["ARQUITECTO_REGISTRO"] == registro
+
+
+def test_el_cinturon_rellena_solo_el_registro_que_falta(sandbox, monkeypatch):
+    """La carpeta del usuario manda: el registro temporal vive a su lado."""
+    monkeypatch.delenv("ARQUITECTO_REGISTRO", raising=False)
+    carpeta = os.environ["ARQUITECTO_CARPETA_PROYECTOS"]
+
+    with verificador.entorno_aislado() as temporal:
+        assert temporal is None
+        assert os.environ["ARQUITECTO_CARPETA_PROYECTOS"] == carpeta
+        registro = Path(os.environ["ARQUITECTO_REGISTRO"])
+        assert registro.name == verificador.NOMBRE_REGISTRO_AISLADO
+        assert registro.parent == Path(carpeta)
+        # Dentro de las raices permitidas: la fabrica no lo rechaza.
+        assert rutas.esta_dentro(fabrica.ruta_registro(), Path(carpeta))
+
+    assert _entorno() == {
+        "ARQUITECTO_CARPETA_PROYECTOS": carpeta,
+        "ARQUITECTO_REGISTRO": None,
+    }
+
+
+def test_el_cinturon_restaura_el_entorno_si_un_paso_peta(sandbox, monkeypatch):
+    _sin_redireccion(monkeypatch)
+    antes = _entorno()
+
+    class _Peta(Exception):
+        pass
+
+    with pytest.raises(_Peta):
+        with verificador.entorno_aislado() as temporal:
+            creado = str(temporal)
+            raise _Peta("el paso revienta")
+
+    assert _entorno() == antes
+    assert not Path(creado).exists(), "el cinturon no limpio su temporal"
+
+
+# --------------------------------------------------------------------------
+# ``main``: el cinturon y el paso 7
+# --------------------------------------------------------------------------
+def _pasos_de_mentira(monkeypatch, paso_mcp) -> None:
+    """Sustituye los pasos 1-5 por dobles: aqui se prueba el aislamiento."""
+    monkeypatch.setattr(verificador, "_resultados", [])
+    monkeypatch.setattr(verificador, "paso_dependencias", lambda: True)
+    monkeypatch.setattr(verificador, "paso_modulos", lambda: (None, None))
+    monkeypatch.setattr(verificador, "paso_servidor", lambda: None)
+    monkeypatch.setattr(verificador, "paso_global", lambda: True)
+    monkeypatch.setattr(verificador, "paso_invocacion", lambda servidor: True)
+    monkeypatch.setattr(verificador, "paso_dependencias_mcp", paso_mcp)
+    # ``main`` escribe en el entorno del proceso: monkeypatch lo devuelve a su
+    # sitio al terminar la prueba.
+    for clave in ("ARQUITECTO_LOG", "ARQUITECTO_MOCK", "ARQUITECTO_PERSISTIR"):
+        monkeypatch.setenv(clave, os.environ.get(clave, ""))
+
+
+def test_main_aisla_los_pasos_aunque_no_se_redirija_nada(sandbox, monkeypatch, capsys):
+    """Un paso descuidado, sin su propio aislamiento, no llega al registro real.
+
+    Es el escenario del CI: nada redirigido a mano y un paso que crea un
+    proyecto como hacia el paso 6 antes de su arreglo. Ahora quien protege es el
+    cinturon del script, no el aislamiento interno del paso.
+    """
+    monkeypatch.setattr(fabrica, "RUTA_REGISTRO", sandbox / "datos" / "proyectos.json")
+    _sin_redireccion(monkeypatch)
+    usados = []
+
+    def _paso_descuidado(servidor):
+        usados.append(os.environ.get("ARQUITECTO_CARPETA_PROYECTOS"))
+        creado = rutas.ruta_de_proyecto("verificacion-descuidada")
+        creado.mkdir(parents=True, exist_ok=True)
+        fabrica.registrar_proyecto(
+            fabrica.Proyecto(nombre="verificacion-descuidada", ruta=str(creado))
+        )
+        return True
+
+    _pasos_de_mentira(monkeypatch, _paso_descuidado)
+
+    codigo = verificador.main([])
+
+    texto = capsys.readouterr().out
+    assert codigo == 0
+    assert "aislamiento" in texto
+    # El paso descuidado trabajo en el temporal del cinturon, no en el sandbox.
+    assert len(usados) == 1 and usados[0] and usados[0] != str(sandbox / "proyectos")
+    assert not (sandbox / "datos").exists(), "el registro real acabo escrito"
+    assert "PASO 7" in texto
+    assert "0 FALLOS" in texto
+    assert not list(Path(tempfile.gettempdir()).glob("{}*".format(verificador.PREFIJO_TEMPORAL)))
+
+
+def test_main_canta_si_el_registro_real_cambia(sandbox, monkeypatch, capsys):
+    """El paso 7 es el que avisa: un paso que escribe en el real se detecta."""
+    real = sandbox / "datos" / "proyectos.json"
+    monkeypatch.setattr(fabrica, "RUTA_REGISTRO", real)
+    _sin_redireccion(monkeypatch)
+
+    def _paso_traidor(servidor):
+        real.parent.mkdir(parents=True, exist_ok=True)
+        real.write_text("[]", encoding="utf-8")
+        return True
+
+    _pasos_de_mentira(monkeypatch, _paso_traidor)
+
+    codigo = verificador.main([])
+
+    texto = capsys.readouterr().out
+    assert codigo == 1
+    assert "PASO 7" in texto
+    assert "la verificacion escribio en el registro real de proyectos" in texto
+
+
+def test_main_avisa_si_no_puede_aislar_el_registro(sandbox, monkeypatch, capsys):
+    """Sin temporal propio no hay cinturon: mejor fallar que escribir donde no toca."""
+    _sin_redireccion(monkeypatch)
+    _pasos_de_mentira(monkeypatch, lambda servidor: True)
+
+    class _TemporalRoto:
+        """Doble de ``tempfile`` que no puede crear la carpeta temporal."""
+
+        def mkdtemp(self, *argumentos, **clave):
+            raise OSError("no hay permisos en el temporal")
+
+    monkeypatch.setattr(verificador, "tempfile", _TemporalRoto())
+
+    codigo = verificador.main([])
+
+    texto = capsys.readouterr().out
+    assert codigo == 1
+    assert "no se pudo aislar el registro" in texto
+    assert os.environ.get("ARQUITECTO_REGISTRO") is None

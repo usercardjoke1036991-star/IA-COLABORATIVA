@@ -291,7 +291,7 @@ herramientas.
 | `fabrica.py` | Crea proyectos, aplica plantillas, `git init`, commits, registro, GitHub y el `venv/` con las librerias dentro del propio proyecto (`instalar_dependencias`). |
 | `orquestador.py` | Bucle autonomo desde consola: idea -> proyecto -> plan -> codigo -> pruebas -> commit. |
 | `prueba_loop.py` | Simulador del loop completo desde consola (sin abrir Cursor). |
-| `scripts/verificar_servidor.py` | Diagnostico de la instalacion + invocacion de herramientas por MCP. El paso 6 crea un proyecto de verdad a traves del tool `crear_proyecto`, pero redirige **la carpeta y el registro** a un temporal y comprueba al final que `datos/proyectos.json` no ha cambiado. |
+| `scripts/verificar_servidor.py` | Diagnostico de la instalacion + invocacion de herramientas por MCP. El paso 6 crea un proyecto de verdad a traves del tool `crear_proyecto`, pero redirige **la carpeta y el registro** a un temporal. Ademas el script se aisla solo (`entorno_aislado`): si nadie ha redirigido nada —el caso del CI— se apunta a un temporal propio y lo borra al terminar, y el **paso 7** compara el SHA-256 de `datos/proyectos.json` antes y despues para probar que la verificacion no lo ha tocado. |
 | `scripts/verificar_fabrica.py` | Verificacion end-to-end de la fabrica en una carpeta temporal (no toca tu registro real). Acepta los tres estados de `gh`: sin instalar, instalado sin sesion y con sesion; si hay sesion, crea de verdad el repositorio remoto del proyecto temporal. Sin banderas es rapido y **sin red**; `--venv` crea de verdad el `venv/` del proyecto temporal y `--pip` anade una instalacion real desde PyPI (esa si necesita Internet). |
 | `scripts/verificar_activador.py` | Verificacion end-to-end del **activador**: activa de verdad una carpeta vacia y ajena a la fabrica (por defecto, una temporal nueva), comprueba la capa + los artefactos del bucle + el registro, y repite la activacion comparando hashes SHA-256 para demostrar que la segunda pasada no cambia ni un byte. `--registro-aislado` no toca `datos/proyectos.json`. |
 | `scripts/instalar_global.py` | Instala el arranque automatico en TODA la maquina: reglas globales de Cursor + servidor MCP en `~/.cursor/mcp.json` y en los settings de Cline (fusionando, nunca pisando). |
@@ -566,7 +566,10 @@ Ademas hay integracion continua en `.github/workflows/ci.yml`:
 - **pruebas**: `pytest` con cobertura en Linux y Windows (matriz de runners) y, en
   Windows, los tres verificadores (`verificar_servidor.py`, `verificar_fabrica.py
   --venv` — crea el entorno de verdad, pero sin red — y
-  `verificar_activador.py --registro-aislado`).
+  `verificar_activador.py --registro-aislado`). Los tres corren con el registro y la
+  carpeta de proyectos apuntando al temporal del runner, y al final un paso comprueba
+  que `datos/` y `proyectos/` siguen intactos: si un verificador futuro se olvidara de
+  aislarse, el CI lo dice en vez de dejar basura en el repositorio.
 - **calidad**: analisis con `SonarSource/sonarqube-scan-action`, que solo se
   ejecuta si existe el secreto `SONAR_TOKEN`; sin el, el CI sigue en verde.
 
@@ -847,9 +850,9 @@ venv\Scripts\python.exe scripts\verificar_fabrica.py
 venv\Scripts\python.exe scripts\verificar_fabrica.py --venv
 venv\Scripts\python.exe scripts\verificar_fabrica.py --venv --pip
 
-# Verificacion de la instalacion (25 comprobaciones, incluido el arranque global del IDE
-# y el paso 6, que crea su proyecto y su registro en un temporal y comprueba al final
-# que datos/proyectos.json no ha cambiado)
+# Verificacion de la instalacion (26 comprobaciones: el arranque global del IDE, el paso 6
+# -crea su proyecto y su registro en un temporal- y el paso 7, que compara el SHA-256 de
+# datos/proyectos.json antes y despues para probar que no se ha tocado)
 venv\Scripts\python.exe scripts\verificar_servidor.py
 
 # Verificacion end-to-end del ACTIVADOR: activa una carpeta ajena DOS veces,

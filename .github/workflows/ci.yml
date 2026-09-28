@@ -69,19 +69,32 @@ jobs:
           # pwsh toma esa salida por un error terminante y aborta el paso; por eso lo
           # bajamos a 'Continue' y comprobamos el codigo de salida a mano.
           $ErrorActionPreference = 'Continue'
+          # Cinturon del CI: el registro y la carpeta de proyectos de los
+          # verificadores viven en el temporal del runner, no en el arbol de
+          # trabajo. Cada verificador se aisla por su cuenta (y
+          # verificar_servidor.py ademas vigila el SHA-256 del registro real),
+          # pero asi ninguno puede ensuciar `datos/` ni `proyectos/` aunque se
+          # olvide: es la misma idea que el aislamiento de las pruebas.
+          $cinturon = Join-Path $env:RUNNER_TEMP 'ci-verificadores'
           $scripts = @(
-            @{ ruta = 'scripts/verificar_servidor.py'; args = @() },
+            @{ ruta = 'scripts/verificar_servidor.py'; args = @()
+               env = @{
+                 ARQUITECTO_CARPETA_PROYECTOS = Join-Path $cinturon 'proyectos'
+                 ARQUITECTO_REGISTRO = Join-Path $cinturon 'proyectos.json'
+               } }
             # --venv: crea de verdad el venv/ del proyecto temporal. Sigue sin salir
             # a Internet (instalar es opt-in), asi que el paso no depende de la red.
-            @{ ruta = 'scripts/verificar_fabrica.py'; args = @('--venv') },
+            @{ ruta = 'scripts/verificar_fabrica.py'; args = @('--venv'); env = @{} }
             # El activador se prueba con registro aislado: el runner no ensucia
             # ningun registro y, al estar en un temporal, mide la idempotencia real.
-            @{ ruta = 'scripts/verificar_activador.py'; args = @('--registro-aislado') }
+            @{ ruta = 'scripts/verificar_activador.py'; args = @('--registro-aislado'); env = @{} }
           )
           foreach ($item in $scripts) {
+            foreach ($clave in $item.env.Keys) { Set-Item -Path "env:$clave" -Value $item.env[$clave] }
             $llamada = @($item.ruta) + @($item.args)
             $texto = (python @llamada 2>&1 | Out-String)
             $codigo = $LASTEXITCODE
+            foreach ($clave in $item.env.Keys) { Remove-Item -Path "env:$clave" -ErrorAction SilentlyContinue }
             Write-Output "--- $($item.ruta) (codigo de salida: $codigo) ---"
             Write-Output $texto
             if ($codigo -ne 0) {
@@ -91,6 +104,17 @@ jobs:
               exit $codigo
             }
           }
+
+      - name: Los verificadores no ensuciaron el repositorio
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $sucio = (git status --porcelain -- datos proyectos | Out-String).Trim()
+          if ($sucio) {
+            Write-Output "::error title=Verificadores::tocaron el arbol de trabajo -> $sucio"
+            exit 1
+          }
+          Write-Output "datos/ y proyectos/ siguen igual: los verificadores se aislaron bien."
 
       - name: Guardar informes
         if: always()

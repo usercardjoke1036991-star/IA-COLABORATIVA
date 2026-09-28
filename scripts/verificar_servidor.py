@@ -12,6 +12,14 @@ Comprueba, de verdad y paso a paso, que todo el sistema funciona:
 6. Se crea un proyecto con ``instalar_dependencias=true`` a traves del tool,
    con pip apuntado a un puerto cerrado: la respuesta debe traer el estado
    pendiente, el comando exacto y como reintentar.
+7. El registro real de proyectos (``datos/proyectos.json``) sigue igual que al
+   empezar: se compara su SHA-256 antes y despues de toda la verificacion.
+
+Ademas, el script se aisla a si mismo: mientras dura la verificacion el registro
+y la carpeta de proyectos viven en un temporal propio (``entorno_aislado``) y el
+entorno se restaura al terminar. Asi un paso futuro que cree un proyecto, o
+cualquier tool que escriba en el registro, no puede tocar ``datos/`` ni
+``proyectos/`` ni aunque se olvide de redirigirlos.
 
 Por defecto se ejecuta en modo simulado (sin red ni API key). Con --real usa el
 proveedor configurado en tu .env y si consume tokens.
@@ -25,6 +33,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
+import hashlib
 import json
 import os
 import shutil
@@ -94,6 +104,74 @@ def _paso(numero: int, titulo: str) -> None:
     print("")
     print("-" * _anchos[0])
     print("PASO {}: {}".format(numero, titulo))
+
+
+# --------------------------------------------------------------------------
+# Cinturon del script: registro y carpeta de proyectos en un temporal
+# --------------------------------------------------------------------------
+#: Prefijo de la carpeta temporal que usa el cinturon (facil de reconocer y de
+#: borrar si una ejecucion se corta a lo bruto).
+PREFIJO_TEMPORAL = "verificacion-servidor-"
+
+#: Claves de entorno que deciden DONDE escribe la fabrica. Si el script no las
+#: redirige, cualquier paso que cree o registre un proyecto escribe en el
+#: registro real (``datos/proyectos.json``) y en ``proyectos/``.
+ENTORNO_ISLAMIENTO = ("ARQUITECTO_REGISTRO", "ARQUITECTO_CARPETA_PROYECTOS")
+
+#: Nombre del registro temporal. Distinto de ``proyectos.json`` a proposito: asi
+#: nunca puede coincidir con un registro de verdad que viviera en esa carpeta.
+NOMBRE_REGISTRO_AISLADO = "verificacion-servidor.json"
+
+
+@contextlib.contextmanager
+def entorno_aislado():
+    """Deja el registro y la carpeta de proyectos en un temporal del script.
+
+    El paso 6 ya aisla lo suyo, pero eso obliga a acordarse en cada paso nuevo:
+    basta que alguien anada un paso que cree un proyecto (o que invoque un tool
+    que lo haga) para que ``datos/proyectos.json`` de verdad acabe con la ficha
+    de un temporal ya borrado. Este cinturon va una capa por fuera: mientras dure
+    el bloque, *cualquier* paso ve un registro y una carpeta temporales, y al
+    salir se restaura el entorno y se borra lo que se creo.
+
+    Se respeta lo que el usuario (o el CI) ya haya redirigido a mano: en ese caso
+    lo que venga puesto no se toca y solo se rellena lo que falte. Cuando el
+    registro se redirige y la carpeta ya venia puesta, el registro temporal vive
+    junto a ella, que es una de las raices que :func:`fabrica.raices_registro`
+    admite.
+
+    Yields:
+        La carpeta temporal del cinturon, o ``None`` si no hizo falta crear
+        ninguna (el entorno ya venia redirigido, o solo faltaba el registro).
+    """
+    antes = {clave: os.environ.get(clave) for clave in ENTORNO_ISLAMIENTO}
+    falta_registro = not antes["ARQUITECTO_REGISTRO"]
+    falta_carpeta = not antes["ARQUITECTO_CARPETA_PROYECTOS"]
+    if not falta_registro and not falta_carpeta:
+        yield None
+        return
+
+    temporal = None
+    if falta_carpeta:
+        temporal = Path(tempfile.mkdtemp(prefix=PREFIJO_TEMPORAL)).resolve()
+        os.environ["ARQUITECTO_CARPETA_PROYECTOS"] = str(temporal / "proyectos")
+    if falta_registro:
+        # Junto a la carpeta de proyectos: asi el registro tambien cae dentro de
+        # las raices que la fabrica admite, venga la carpeta del cinturon o del
+        # usuario.
+        os.environ["ARQUITECTO_REGISTRO"] = str(
+            Path(os.environ["ARQUITECTO_CARPETA_PROYECTOS"]) / NOMBRE_REGISTRO_AISLADO
+        )
+    try:
+        yield temporal
+    finally:
+        for clave, valor in antes.items():
+            if valor is None:
+                os.environ.pop(clave, None)
+            else:
+                os.environ[clave] = valor
+        if temporal is not None:
+            shutil.rmtree(temporal, ignore_errors=True)
 
 
 # --------------------------------------------------------------------------
@@ -420,6 +498,11 @@ def paso_dependencias_mcp(servidor) -> bool:
     solo protege el historial del arquitecto, no ``datos/proyectos.json``: sin
     redirigir ``ARQUITECTO_REGISTRO`` este paso dejaba en el registro REAL la ficha
     de un proyecto temporal que se borra unas lineas mas abajo.
+
+    El cinturon del script (``entorno_aislado``) ya deja el registro real fuera de
+    alcance, asi que esta capa interna cubre el error contrario: que un cambio de
+    este paso escriba en el registro que la verificacion tenia al empezar. El de
+    verdad lo vigila el paso 7.
     """
     _paso(6, "Dependencias a traves del tool crear_proyecto")
     if servidor is None:
@@ -527,10 +610,13 @@ def paso_dependencias_mcp(servidor) -> bool:
             _fallo("no se pudo releer el registro real de proyectos", error_registro)
             valido = False
         elif despues == registro_real:
-            _ok("el registro real de proyectos no se toca", str(fabrica.ruta_registro()))
+            _ok(
+                "el paso no escribio en el registro que tenia al empezar",
+                str(fabrica.ruta_registro()),
+            )
         else:
             _fallo(
-                "la verificacion escribio en el registro real de proyectos",
+                "el paso escribio en el registro que tenia al empezar",
                 "revisa {}".format(fabrica.ruta_registro()),
             )
             valido = False
@@ -552,6 +638,73 @@ def _limpiar(ruta: Path) -> None:
 
 
 # --------------------------------------------------------------------------
+# Paso 7: el registro real de proyectos sigue intacto
+# --------------------------------------------------------------------------
+def _huella(ruta: Path) -> str:
+    """SHA-256 del registro (o ``"sin registro"`` si todavia no existe)."""
+    try:
+        contenido = ruta.read_bytes()
+    except FileNotFoundError:
+        return "sin registro"
+    except OSError as exc:
+        raise RuntimeError("no se pudo leer {}: {}".format(ruta, exc))
+    return hashlib.sha256(contenido).hexdigest()
+
+
+def vigilar_registro_real():
+    """Foto del registro REAL, tomada ANTES de que el cinturon toque el entorno.
+
+    Hay que leerla mientras el entorno es el de verdad: en cuanto el cinturon
+    entra en accion, ``fabrica.ruta_registro()`` devuelve el temporal y el
+    registro real deja de ser visible para el script.
+
+    Returns:
+        ``(ruta, huella, error)``. La ruta es ``None`` si no se pudo resolver.
+    """
+    try:
+        import fabrica
+
+        ruta = Path(fabrica.ruta_registro())
+    except Exception as exc:  # noqa: BLE001 - la verificacion informa del fallo
+        return None, "", "{}: {}".format(type(exc).__name__, exc)
+    try:
+        return ruta, _huella(ruta), ""
+    except RuntimeError as exc:
+        return ruta, "", str(exc)
+
+
+def paso_registro_real(ruta, huella: str, error: str) -> bool:
+    """Paso 7: el registro real no ha cambiado ni un byte durante la verificacion.
+
+    Cierra el circulo del cinturon: los pasos 1-6 corren con el registro
+    temporal, asi que si el real acaba con la misma huella, esta verificacion no
+    le ha tocado.
+    """
+    _paso(7, "El registro real de proyectos no se ha tocado")
+    if ruta is None:
+        _fallo("no se pudo localizar el registro real de proyectos", error)
+        return False
+    print("  registro vigilado: {}".format(ruta))
+    print("  huella antes     : {}".format(huella))
+    if not huella:
+        _fallo("no se pudo leer el registro real antes de empezar", error)
+        return False
+    try:
+        despues = _huella(ruta)
+    except RuntimeError as exc:
+        _fallo("no se pudo releer el registro real de proyectos", str(exc))
+        return False
+    if despues == huella:
+        _ok("misma huella SHA-256 antes y despues de la verificacion", despues)
+        return True
+    _fallo(
+        "la verificacion escribio en el registro real de proyectos",
+        "antes {} | despues {}".format(huella, despues),
+    )
+    return False
+
+
+# --------------------------------------------------------------------------
 # Principal
 # --------------------------------------------------------------------------
 def main(argv=None) -> int:
@@ -568,17 +721,40 @@ def main(argv=None) -> int:
         os.environ["ARQUITECTO_MOCK"] = "1"
     os.environ["ARQUITECTO_PERSISTIR"] = "0"
 
+    # La foto del registro REAL se toma antes de aislar nada: en cuanto el
+    # cinturon entra en accion, el script solo ve su propio temporal.
+    ruta_registro, huella_registro, error_registro = vigilar_registro_real()
+    entorno_inicial = {clave: os.environ.get(clave) for clave in ENTORNO_ISLAMIENTO}
+
     print("=" * 70)
     print(" VERIFICACION DEL ARQUITECTO EXTERNO ".center(70, "="))
     print("=" * 70)
     print("modo: {}".format("REAL (consume tokens)" if argumentos.real else "SIMULADO (sin red)"))
+    print("registro real: {}".format(ruta_registro or "(sin localizar)"))
 
-    paso_dependencias()
-    paso_modulos()
-    servidor = paso_servidor()
-    paso_global()
-    paso_invocacion(servidor)
-    paso_dependencias_mcp(servidor)
+    try:
+        with entorno_aislado():
+            if any(
+                os.environ.get(clave) != entorno_inicial[clave] for clave in ENTORNO_ISLAMIENTO
+            ):
+                print("aislamiento: el script usa su propio temporal (los de verdad no se tocan)")
+                print("  registro : {}".format(os.environ["ARQUITECTO_REGISTRO"]))
+                print("  proyectos: {}".format(os.environ["ARQUITECTO_CARPETA_PROYECTOS"]))
+
+            paso_dependencias()
+            paso_modulos()
+            servidor = paso_servidor()
+            paso_global()
+            paso_invocacion(servidor)
+            paso_dependencias_mcp(servidor)
+            paso_registro_real(ruta_registro, huella_registro, error_registro)
+    except OSError as exc:
+        # Sin temporal no hay cinturon: mejor avisar que seguir escribiendo
+        # donde no se debe.
+        _fallo(
+            "no se pudo aislar el registro de proyectos del script",
+            "{}: {}".format(type(exc).__name__, exc),
+        )
 
     print("")
     print("=" * 70)
