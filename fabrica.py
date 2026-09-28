@@ -34,17 +34,84 @@ import rutas
 RUTA_REGISTRO = configuracion.RAIZ_PROYECTO / "datos" / "proyectos.json"
 
 
+def raices_registro() -> List[Path]:
+    """Carpetas dentro de las que puede vivir el registro de proyectos.
+
+    Defensa contra *path traversal* (regla SonarQube ``pythonsecurity:S2083``):
+    ``ARQUITECTO_REGISTRO`` es una variable de entorno, o sea una entrada
+    externa, y no puede acabar escribiendo en cualquier punto del disco. Se
+    admiten la raiz del proyecto y la carpeta que la contiene a la de proyectos
+    (ahi viven los sandboxes de pruebas y los cerebros alternativos).
+    """
+    raiz_proyecto = rutas.raiz_proyecto()
+    contenedora = rutas.raiz_fabrica().parent
+    raices = [raiz_proyecto]
+    if contenedora != raiz_proyecto:
+        raices.append(contenedora)
+    return raices
+
+
+def _exigir_raiz_permitida(destino: Path) -> Path:
+    """Comprueba que ``destino`` cuelga de una raiz permitida.
+
+    Es el saneado central: la ruta tiene que estar resuelta y contenida en
+    :func:`raices_registro`. Si no, se lanza :class:`ErrorFabrica` antes de
+    tocar el disco.
+    """
+    if configuracion.cargar_fabrica().permitir_externo:
+        return destino
+    permitidas = raices_registro()
+    if any(destino.is_relative_to(raiz) for raiz in permitidas):
+        return destino
+    raise ErrorFabrica(
+        "ARQUITECTO_REGISTRO apunta fuera de las raices permitidas: {}\n"
+        "Permitido: {}.\n"
+        "Si de verdad quieres escribir ahi, pon ARQUITECTO_PERMITIR_EXTERNO=true "
+        "en el .env y reinicia.".format(destino, ", ".join(str(raiz) for raiz in permitidas))
+    )
+
+
+def _carpeta_registro(directorio: Path) -> Path:
+    """Resuelve la carpeta del registro y la valida contra las raices."""
+    if "\0" in str(directorio):
+        raise ErrorFabrica("ARQUITECTO_REGISTRO invalido: contiene un byte nulo.")
+    try:
+        carpeta = Path(directorio).expanduser().resolve()
+    except (OSError, RuntimeError) as exc:  # pragma: no cover - defensivo
+        raise ErrorFabrica("No se pudo resolver ARQUITECTO_REGISTRO: {}".format(exc))
+    return _exigir_raiz_permitida(carpeta)
+
+
+def _archivo_registro(nombre: str) -> str:
+    """Valida el nombre del archivo del registro (solo el nombre, sin rutas)."""
+    if not nombre or nombre in {".", ".."}:
+        raise ErrorFabrica("ARQUITECTO_REGISTRO invalido: falta el nombre del archivo.")
+    # Windows reserva el nombre con cualquier extension ('nul.json' tambien
+    # apunta al dispositivo), asi que se comprueba el nombre y su raiz.
+    if nombre.lower() in rutas.RESERVADOS or Path(nombre).stem.lower() in rutas.RESERVADOS:
+        raise ErrorFabrica("Nombre reservado del sistema: '{}'. Cambialo.".format(nombre))
+    if Path(nombre).suffix.lower() in rutas.EXTENSIONES_PROHIBIDAS:
+        raise ErrorFabrica(
+            "El registro no puede ser un binario '{}': usa un .json.".format(nombre)
+        )
+    return nombre
+
+
 def ruta_registro() -> Path:
-    """Ruta del registro de proyectos.
+    """Ruta del registro de proyectos, ya saneada.
 
     Se puede cambiar con ``ARQUITECTO_REGISTRO`` (util para pruebas o para
-    mantener varios cerebros de la fabrica aislados).
+    mantener varios cerebros de la fabrica aislados). Del valor recibido solo
+    se aprovechan **la carpeta validada y el nombre del archivo**: nunca se
+    escribe una ruta que venga tal cual del entorno.
     """
     personalizada = (os.getenv("ARQUITECTO_REGISTRO") or "").strip()
     if not personalizada:
         return RUTA_REGISTRO
-    ruta = Path(personalizada)
-    return ruta if ruta.is_absolute() else configuracion.RAIZ_PROYECTO / ruta
+    indicada = Path(personalizada)
+    if not indicada.is_absolute():
+        indicada = configuracion.RAIZ_PROYECTO / indicada
+    return _carpeta_registro(indicada.parent) / _archivo_registro(indicada.name)
 
 #: Mensaje del primer commit de cada proyecto nuevo.
 MENSAJE_INICIAL = "chore: proyecto creado por la fabrica de IA"
@@ -102,8 +169,13 @@ def cargar_registro() -> Dict[str, dict]:
 
 
 def guardar_registro(registro: Dict[str, dict]) -> None:
-    """Escribe el registro (crea ``datos/`` si hace falta)."""
-    destino = ruta_registro()
+    """Escribe el registro (crea ``datos/`` si hace falta).
+
+    La ruta se vuelve a validar aqui, en el punto exacto de la escritura: si
+    alguien llama a esta funcion con una ruta manipulada, se rechaza antes de
+    tocar el disco (regla SonarQube ``pythonsecurity:S2083``).
+    """
+    destino = _exigir_raiz_permitida(ruta_registro())
     destino.parent.mkdir(parents=True, exist_ok=True)
     volcado = {
         "actualizado": datetime.now().isoformat(timespec="seconds"),

@@ -10,6 +10,7 @@ import pytest
 import fabrica
 import herramientas_archivos as archivos
 import plantillas
+import rutas
 
 if not fabrica.hay_git():  # pragma: no cover - runner sin git
     pytest.skip("git no esta disponible en esta maquina", allow_module_level=True)
@@ -160,3 +161,93 @@ def test_buscar_en_contenido_encuentra_coincidencias(sandbox):
     salida = archivos.buscar_en_contenido("buscador", "def salud")
 
     assert "src/app.py" in salida
+
+
+# --------------------------------------------------------------------------
+# Registro: saneado de ARQUITECTO_REGISTRO (path traversal, S2083)
+# --------------------------------------------------------------------------
+def test_ruta_registro_acepta_una_ruta_dentro_del_sandbox(sandbox, monkeypatch):
+    monkeypatch.setenv("ARQUITECTO_REGISTRO", str(sandbox / "cerebro.json"))
+
+    ruta = fabrica.ruta_registro()
+
+    assert ruta.name == "cerebro.json"
+    assert ruta.parent == Path(sandbox).resolve()
+
+
+def test_ruta_registro_acepta_el_registro_por_defecto(sandbox, monkeypatch):
+    monkeypatch.delenv("ARQUITECTO_REGISTRO", raising=False)
+
+    assert fabrica.ruta_registro() == fabrica.RUTA_REGISTRO
+
+
+def test_ruta_registro_rechaza_una_ruta_fuera_del_sandbox(sandbox, monkeypatch):
+    monkeypatch.setenv("ARQUITECTO_REGISTRO", str(sandbox.parent / "colado.json"))
+
+    with pytest.raises(fabrica.ErrorFabrica):
+        fabrica.ruta_registro()
+
+
+def test_ruta_registro_rechaza_el_traversal_con_puntos(sandbox, monkeypatch):
+    monkeypatch.setenv("ARQUITECTO_REGISTRO", str(sandbox / ".." / "colado.json"))
+
+    with pytest.raises(fabrica.ErrorFabrica):
+        fabrica.ruta_registro()
+
+
+@pytest.mark.parametrize("nombre", ["nul", "con.json", "aux.txt", "registro.exe"])
+def test_ruta_registro_rechaza_nombres_peligrosos(sandbox, monkeypatch, nombre):
+    monkeypatch.setenv("ARQUITECTO_REGISTRO", str(sandbox / nombre))
+
+    with pytest.raises(fabrica.ErrorFabrica):
+        fabrica.ruta_registro()
+
+
+def test_carpeta_registro_rechaza_un_byte_nulo(sandbox):
+    with pytest.raises(fabrica.ErrorFabrica, match="byte nulo"):
+        fabrica._carpeta_registro(Path(sandbox / "datos") / "\0malo")
+
+
+@pytest.mark.parametrize("nombre", ["", ".", "..", "nul.json", "aux.txt", "malo.exe"])
+def test_archivo_registro_rechaza_nombres_peligrosos(nombre):
+    with pytest.raises(fabrica.ErrorFabrica):
+        fabrica._archivo_registro(nombre)
+
+
+@pytest.mark.parametrize("nombre", ["proyectos.json", "cerebro.json", "registro-2.json"])
+def test_archivo_registro_acepta_json_normales(nombre):
+    assert fabrica._archivo_registro(nombre) == nombre
+
+
+def test_raices_registro_admite_el_proyecto_y_el_sandbox(sandbox):
+    raices = fabrica.raices_registro()
+
+    assert rutas.raiz_proyecto() in raices
+    assert Path(sandbox).resolve() in raices
+
+
+def test_permitir_externo_salta_la_comprobacion_de_raices(sandbox, monkeypatch):
+    externo = sandbox.parent / "cerebro.json"
+    monkeypatch.setenv("ARQUITECTO_REGISTRO", str(externo))
+    monkeypatch.setenv("ARQUITECTO_PERMITIR_EXTERNO", "1")
+
+    assert fabrica.ruta_registro() == externo.resolve()
+
+
+def test_guardar_y_leer_el_registro_en_el_sandbox(sandbox):
+    fabrica.guardar_registro({"demo": {"nombre": "demo", "plantillas": ["python"]}})
+
+    assert fabrica.cargar_registro() == {
+        "demo": {"nombre": "demo", "plantillas": ["python"]}
+    }
+    assert (Path(sandbox) / "proyectos.json").exists()
+
+
+def test_guardar_registro_no_obedece_a_una_ruta_manipulada(sandbox, monkeypatch):
+    colado = sandbox.parent / "colado.json"
+    monkeypatch.setenv("ARQUITECTO_REGISTRO", str(colado))
+
+    with pytest.raises(fabrica.ErrorFabrica):
+        fabrica.guardar_registro({"demo": {}})
+
+    assert not colado.exists()

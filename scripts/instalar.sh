@@ -16,7 +16,7 @@ PY="python3"
 command -v "$PY" >/dev/null 2>&1 || PY="python"
 
 echo "[1/4] Entorno virtual en ./venv ..."
-if [ ! -x "venv/bin/python" ]; then
+if [[ ! -x "venv/bin/python" ]]; then
     "$PY" -m venv venv
     echo "      creado."
 else
@@ -29,7 +29,7 @@ venv/bin/python -m pip install -r requirements.txt --quiet
 echo "      mcp + requests instalados."
 
 echo "[3/4] Archivo .env ..."
-if [ ! -f ".env" ]; then
+if [[ ! -f ".env" ]]; then
     cp .env.example .env
     echo "      se creo .env: abrelo y pega tu API key."
 else

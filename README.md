@@ -360,6 +360,38 @@ Ademas hay integracion continua en `.github/workflows/ci.yml`:
 > segundos, sin haber ejecutado casi nada). El mismo cuidado hace falta en cualquier
 > otro paso que llame a un script de este repositorio.
 
+### Dependencias fijadas (lock con hashes)
+
+El CI no instala `requirements.txt` tal cual: instala `requirements.lock.txt` con
+`--only-binary :all: --require-hashes`, de modo que cada dependencia va pinneada
+con `==` y con el `sha256` de sus wheels. Si el indice devolviera otro artefacto,
+la instalacion falla en vez de ejecutar codigo no verificado.
+
+Para regenerarlo, hazlo en el venv del proyecto (es el que tiene las versiones
+buenas):
+
+```powershell
+venv\Scripts\python.exe -m pip install --only-binary :all: pip-tools
+venv\Scripts\python.exe -m piptools compile --generate-hashes --output-file requirements.lock.txt requirements-dev.txt requirements.txt
+```
+
+`pip-compile` **no** escribe dos cosas que el lock necesita, asi que hay que
+reponerlas a mano despues de regenerarlo:
+
+1. la linea `--only-binary :all:` del principio (sin ella `pip` intentaria
+   compilar sdists y `--require-hashes` haria el resto, pero es mas claro asi);
+2. el marcador de plataforma de `pywin32`, que solo existe para Windows:
+   `pywin32==312 ; sys_platform == "win32"` (lo pide `mcp`). Sin ese marcador, el
+   runner de Ubuntu muere al leer el lock con
+   `No matching distribution found for pywin32`.
+
+Eso, y que ninguna dependencia quede sin hash, lo comprueba `tests\test_lock.py`:
+
+```powershell
+venv\Scripts\python.exe -m pytest tests\test_lock.py tests\test_registrar_mcp.py -q
+venv\Scripts\python.exe -m pip install --dry-run --ignore-installed -r requirements.lock.txt
+```
+
 Y SonarQube Cloud analiza el repositorio por su cuenta: al instalar la app de
 SonarSource queda activado el **analisis automatico**, que publica el resultado de
 cada push como check `SonarCloud Code Analysis` (con su quality gate), sin tocar
