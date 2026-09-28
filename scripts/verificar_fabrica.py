@@ -1,4 +1,4 @@
-"""Verificacion end-to-end de la fabrica de proyectos.
+r"""Verificacion end-to-end de la fabrica de proyectos.
 
 Comprueba, contra el disco de verdad y en una carpeta temporal (nada se crea en
 tu carpeta ``proyectos/``), que toda la maquinaria nueva funciona:
@@ -7,14 +7,18 @@ tu carpeta ``proyectos/``), que toda la maquinaria nueva funciona:
 2. Plantillas: catalogo, combinacion, requirements fusionado y contenido limpio
    (sin dobles barras ni caracteres de control en los .ps1 generados).
 3. Herramientas de archivos: crear, leer, buscar, mover, borrar y protecciones.
-4. Fabrica: crear proyecto, git init + commit, registro y arbol del proyecto.
+4. Fabrica: crear proyecto, git init + commit, registro y arbol del proyecto,
+   incluido el flujo de dependencias: sin manifiesto, fallo real de ``pip``
+   (indice muerto), timeout real y, con ``--pip``, instalacion de verdad desde
+   PyPI; siempre con el proyecto intacto.
 5. Rol PROGRAMADOR: parser del formato '### ARCHIVO:' y aplicacion al proyecto.
 
 Uso:
-    venv\\\\Scripts\\\\python.exe scripts\\\\verificar_fabrica.py
-    venv\\\\Scripts\\\\python.exe scripts\\\\verificar_fabrica.py --venv      (crea el venv real)
-    venv\\\\Scripts\\\\python.exe scripts\\\\verificar_fabrica.py --real      (usa el modelo real)
-    venv\\\\Scripts\\\\python.exe scripts\\\\verificar_fabrica.py --conservar (no borra el temporal)
+    venv\Scripts\python.exe scripts\verificar_fabrica.py
+    venv\Scripts\python.exe scripts\verificar_fabrica.py --venv      (crea el venv real)
+    venv\Scripts\python.exe scripts\verificar_fabrica.py --pip       (instala de verdad desde PyPI)
+    venv\Scripts\python.exe scripts\verificar_fabrica.py --real      (usa el modelo real)
+    venv\Scripts\python.exe scripts\verificar_fabrica.py --conservar (no borra el temporal)
 """
 
 from __future__ import annotations
@@ -22,8 +26,11 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import socket
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -212,7 +219,9 @@ def paso_archivos(archivos, rutas, nombre: str) -> None:
 # --------------------------------------------------------------------------
 # Paso 4: fabrica de proyectos
 # --------------------------------------------------------------------------
-def paso_fabrica(fabrica, nombre: str, con_venv: bool) -> None:
+def paso_fabrica(
+    fabrica, archivos, procesos, nombre: str, con_venv: bool, con_pip: bool = False
+) -> None:
     _paso(4, "Fabrica: crear proyecto, git y registro")
 
     informe = fabrica.crear_proyecto(
@@ -252,6 +261,7 @@ def paso_fabrica(fabrica, nombre: str, con_venv: bool) -> None:
 
     comprobar_publicacion(fabrica, nombre)
     comprobar_dependencias(fabrica, nombre)
+    comprobar_dependencias_reales(fabrica, archivos, procesos, nombre, con_pip)
 
     if con_venv:
         print(preparar_entorno(fabrica, nombre))
@@ -348,6 +358,375 @@ def comprobar_dependencias(fabrica, nombre: str) -> None:
         "el interprete que se usaria vive dentro del proyecto (nunca el global)",
         str(fabrica.interprete_venv(raiz)),
     )
+    # Sin manifiesto no hay nada que instalar: ni comando ni diagnostico de pip.
+    _comprobar(
+        "pip install" not in informe and "Comando exacto" not in informe,
+        "sin manifiesto no se llama a pip ni se ofrece un comando",
+    )
+    # La regla de orquestacion (criterio "un solo camino") es comprobable por lectura.
+    reglas = RAIZ / ".clinerules"
+    if reglas.is_file():
+        texto_reglas = reglas.read_text(encoding="utf-8", errors="replace").lower()
+        _comprobar(
+            "un solo camino" in texto_reglas and "no uses los dos" in texto_reglas,
+            "la regla de orquestacion prohibe instalar por los dos caminos a la vez",
+        )
+    else:
+        print("  nota: no hay .clinerules en la raiz, se omite la regla de orquestacion")
+
+
+# --------------------------------------------------------------------------
+# Dependencias con pip REAL (rutas de fallo)
+# --------------------------------------------------------------------------
+#: Entorno para forzar un fallo inmediato y determinista de ``pip``: se le da un
+#: indice en un puerto cerrado de la propia maquina (sin tocar red externa), sin
+#: reintentos y sin cache, y se neutraliza cualquier proxy del sistema.
+ENTORNO_INDICE_MUERTO = {
+    "PIP_INDEX_URL": "http://127.0.0.1:1/simple",
+    "PIP_RETRIES": "0",
+    "PIP_TIMEOUT": "2",
+    "PIP_NO_CACHE_DIR": "1",
+    "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+    "NO_PROXY": "127.0.0.1,localhost",
+    "no_proxy": "127.0.0.1,localhost",
+    "HTTP_PROXY": "",
+    "HTTPS_PROXY": "",
+    "http_proxy": "",
+    "https_proxy": "",
+}
+
+#: Paquete que no existe en ningun indice: prueba el error real de ``pip``.
+PAQUETE_INEXISTENTE = "paquete-que-no-existe-xyzzy"
+
+#: Paquete real, minusculo y sin compilacion: prueba el exito real de ``pip``.
+PAQUETE_REAL = "six==1.16.0"
+PAQUETE_REAL_NOMBRE = "six"
+
+
+def _activar_entorno(extra: dict) -> dict:
+    """Pisa variables del proceso (pip las hereda) y devuelve las anteriores."""
+    anteriores = {clave: os.environ.get(clave) for clave in extra}
+    os.environ.update(extra)
+    return anteriores
+
+
+def _restaurar_entorno(anteriores: dict) -> None:
+    """Deja ``os.environ`` como estaba antes de :func:`_activar_entorno`."""
+    for clave, valor in anteriores.items():
+        if valor is None:
+            os.environ.pop(clave, None)
+        else:
+            os.environ[clave] = valor
+
+
+def _config_pip_vacia(carpeta: Path) -> str:
+    """Devuelve un ``pip.ini`` vacio: aisla la prueba de la config global del usuario."""
+    ini = carpeta / "pip.ini"
+    if not ini.exists():
+        ini.write_text("# vacio a proposito: aisla la prueba de la config global\n", encoding="utf-8")
+    return str(ini)
+
+
+def _paquetes_del_venv(procesos, fabrica, raiz: Path) -> list:
+    """Paquetes instalados en el ``venv/`` del proyecto, leidos por su interprete.
+
+    Se pregunta al interprete del propio proyecto (no al global) que liste sus
+    ``*.dist-info``: asi se comprueba de verdad donde cayeron las librerias.
+    """
+    return _paquetes_del_interprete(procesos, fabrica.interprete_venv(raiz), raiz)
+
+
+def _paquetes_del_interprete(procesos, interprete: Path, cwd: Path) -> list:
+    """Paquetes instalados en el ``site-packages`` de un interprete concreto.
+
+    Se pregunta al interprete (``-c``) por sus ``*.dist-info``: sirve tanto para
+    ver donde cayeron las librerias del proyecto como para comprobar que **no**
+    cayeron en el interprete que ejecuta la verificacion. Todo en una sola linea
+    con ``;`` para que el guion no necesite saltos escapados.
+    """
+    guion = (
+        "import pathlib, sysconfig; "
+        "print(chr(10).join(sorted(p.name for p in "
+        "pathlib.Path(sysconfig.get_paths()['purelib']).glob('*.dist-info'))))"
+    )
+    try:
+        codigo, salida, _ = procesos.ejecutar([str(interprete), "-c", guion], cwd=cwd, timeout=120)
+    except Exception:  # noqa: BLE001 - un fallo aqui no puede romper la verificacion
+        return []
+    if codigo != 0:
+        return []
+    return [linea.strip() for linea in salida.splitlines() if linea.strip()]
+
+
+def _procesos_python_vivos(procesos) -> int:
+    """Cuenta los ``python.exe`` vivos (Windows); ``-1`` si no se puede consultar."""
+    if os.name != "nt":
+        return -1
+    try:
+        codigo, salida, _ = procesos.ejecutar(
+            ["tasklist", "/FI", "IMAGENAME eq python.exe", "/NH"], cwd=RAIZ, timeout=120
+        )
+    except Exception:  # noqa: BLE001
+        return -1
+    if codigo != 0:
+        return -1
+    return salida.lower().count("python.exe")
+
+
+class _ServidorMudo:
+    """Escucha en un puerto local pero nunca responde: fuerza el timeout de pip.
+
+    Es la unica forma de provocar un timeout de verdad sin salir a la red: pip
+    conecta, espera la respuesta del indice y se queda colgado hasta que
+    ``preparar_entorno`` corta por tiempo y mata el arbol de procesos.
+    """
+
+    def __init__(self) -> None:
+        self._socket = socket.socket()
+        self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._socket.bind(("127.0.0.1", 0))
+        self._socket.listen(8)
+        self.puerto = int(self._socket.getsockname()[1])
+        self._conexiones = []
+        self._hilo = threading.Thread(target=self._atender, daemon=True)
+        self._hilo.start()
+
+    @property
+    def direccion(self) -> str:
+        return "http://127.0.0.1:{}/simple".format(self.puerto)
+
+    def _atender(self) -> None:
+        while True:
+            try:
+                conexion, _ = self._socket.accept()
+            except OSError:
+                return
+            self._conexiones.append(conexion)  # aceptada y muda a proposito
+
+    def cerrar(self) -> None:
+        try:
+            self._socket.close()
+        except OSError:
+            pass
+        for conexion in self._conexiones:
+            try:
+                conexion.close()
+            except OSError:
+                pass
+
+
+def comprobar_dependencias_reales(
+    fabrica, archivos, procesos, nombre: str, instalar_real: bool = False
+) -> None:
+    """Provoca fallos REALES de ``pip`` contra el ``venv/`` de un proyecto.
+
+    Todo apunta a un puerto cerrado o a un servidor mudo de la propia maquina:
+    no se sale a Internet. En cada ruta de fallo se verifica lo mismo: el
+    proyecto y su ``venv/`` sobreviven, el estado queda en ``pendiente_*``, el
+    comando exacto aparece en el informe y **no** queda instalado ningun paquete
+    del manifiesto ni procesos de pip vivos.
+
+    Con ``instalar_real`` (bandera ``--pip``) se anade el caso contrario: una
+    instalacion de verdad desde PyPI, en la que la libreria tiene que quedar
+    dentro del ``venv/`` del proyecto y no aparecer en ningun otro entorno.
+    """
+    raiz = Path(fabrica.ficha_proyecto(nombre).ruta)
+    requirements = raiz / "requirements.txt"
+    original = requirements.read_text(encoding="utf-8") if requirements.is_file() else ""
+    paquetes_esperados = [
+        linea.split("=")[0].split(">")[0].split("<")[0].strip().lower()
+        for linea in original.splitlines()
+        if linea.strip() and not linea.strip().startswith("#")
+    ]
+    if not paquetes_esperados:
+        print("  nota: el manifiesto no declara paquetes, se comprueba solo el estado")
+
+    config_pip = Path(tempfile.mkdtemp(prefix="pip-ini-"))
+    entorno_muerto = dict(ENTORNO_INDICE_MUERTO, PIP_CONFIG_FILE=_config_pip_vacia(config_pip))
+    try:
+        print("  4a) pip real contra un indice imposible (puerto cerrado)")
+        ficha = fabrica.ficha_proyecto(nombre)
+        anteriores = _activar_entorno(entorno_muerto)
+        try:
+            primero = fabrica.preparar_entorno(nombre, instalar=True, timeout=60)
+        finally:
+            _restaurar_entorno(anteriores)
+        print("\n".join("     " + linea for linea in primero.splitlines()[:14]))
+
+        _comprobar(
+            "estado=pendiente_error_red" in primero,
+            "indice muerto: pip real queda como pendiente_error_red",
+        )
+        _comprobar("Comando exacto:" in primero, "indice muerto: el informe deja el comando exacto")
+        _comprobar(
+            "pip install" in primero and str(raiz) in primero,
+            "indice muerto: el comando usa el interprete del propio proyecto",
+        )
+        _comprobar(
+            "Salida de pip" in primero,
+            "indice muerto: el error de pip viaja en el informe (no se pierde)",
+        )
+        _comprobar(
+            "Reintenta con preparar_entorno" in primero,
+            "indice muerto: el informe dice como reintentar",
+        )
+        _comprobar(
+            raiz.is_dir() and (raiz / "venv").is_dir() and (raiz / "README.md").is_file(),
+            "indice muerto: el proyecto y su venv siguen intactos",
+        )
+        _comprobar(
+            str(ficha.ruta) == str(raiz) and ficha.estado.startswith("creado"),
+            "indice muerto: la ficha del proyecto no se degrada",
+            ficha.estado,
+        )
+        instalados = _paquetes_del_venv(procesos, fabrica, raiz)
+        _comprobar(
+            bool(instalados) and not any(
+                instalado.lower().startswith(paquete.replace("_", "-"))
+                for paquete in paquetes_esperados
+                for instalado in instalados
+            ),
+            "indice muerto: ningun paquete del manifiesto acabo instalado",
+            "site-packages: {}".format(", ".join(instalados) or "(vacio)"),
+        )
+
+        print("  4b) pip real, paquete inexistente en el indice")
+        archivos.escribir_archivo(nombre, "requirements.txt", "{}==9.9.9\n".format(PAQUETE_INEXISTENTE))
+        anteriores = _activar_entorno(entorno_muerto)
+        try:
+            segundo = fabrica.preparar_entorno(nombre, instalar=True, timeout=60)
+        finally:
+            _restaurar_entorno(anteriores)
+            if original.strip():
+                archivos.escribir_archivo(nombre, "requirements.txt", original)
+        print("\n".join("     " + linea for linea in segundo.splitlines()[:14]))
+
+        _comprobar(
+            "estado=pendiente_error_red" in segundo,
+            "paquete inexistente: queda como pendiente_error_red",
+        )
+        _comprobar(
+            "Salida de pip" in segundo and PAQUETE_INEXISTENTE in segundo,
+            "paquete inexistente: el informe nombra el paquete que no se encontro",
+        )
+        _comprobar("estado=ok" not in segundo, "paquete inexistente: no se informa de exito")
+        instalados = _paquetes_del_venv(procesos, fabrica, raiz)
+        _comprobar(
+            not any(PAQUETE_INEXISTENTE.replace("-", "_") in instalado for instalado in instalados),
+            "paquete inexistente: no se instalo nada parecido",
+            "site-packages: {}".format(", ".join(instalados) or "(vacio)"),
+        )
+
+        print("  4c) pip real, servidor que acepta y nunca responde (timeout)")
+        servidor = _ServidorMudo()
+        antes = _procesos_python_vivos(procesos)
+        entorno_timeout = dict(ENTORNO_INDICE_MUERTO)
+        entorno_timeout.update(
+            {
+                "PIP_INDEX_URL": servidor.direccion,
+                "PIP_TIMEOUT": "600",
+                "PIP_CONFIG_FILE": _config_pip_vacia(config_pip),
+            }
+        )
+        anteriores = _activar_entorno(entorno_timeout)
+        try:
+            inicio = time.time()
+            tercero = fabrica.preparar_entorno(nombre, instalar=True, timeout=2)
+            tardanza = time.time() - inicio
+        finally:
+            _restaurar_entorno(anteriores)
+            servidor.cerrar()
+        print("\n".join("     " + linea for linea in tercero.splitlines()[:14]))
+
+        _comprobar(
+            "estado=pendiente_timeout" in tercero,
+            "timeout: pip real queda como pendiente_timeout",
+        )
+        _comprobar(
+            "cancel" in tercero.lower(),
+            "timeout: el informe explica que se corto a proposito",
+        )
+        _comprobar(
+            tardanza < 30,
+            "timeout: se corta de verdad y no espera a pip ({}s)".format(round(tardanza, 1)),
+        )
+        _comprobar(
+            raiz.is_dir() and (raiz / "venv").is_dir() and (raiz / "requirements.txt").is_file(),
+            "timeout: el proyecto, su venv y su manifiesto siguen ahi",
+        )
+        _comprobar(
+            str(fabrica.interprete_venv(raiz)).startswith(str(raiz)),
+            "timeout: el interprete sigue siendo el del proyecto",
+        )
+        if antes >= 0:
+            time.sleep(2)  # margen para que el sistema refleje la muerte del arbol
+            despues = _procesos_python_vivos(procesos)
+            _comprobar(
+                despues <= antes,
+                "timeout: el corte no deja procesos python colgados ({} -> {})".format(antes, despues),
+            )
+        else:
+            print("     nota: tasklist no disponible, no se cuentan procesos vivos")
+
+        if not instalar_real:
+            print("     nota: sin --pip no se sale a Internet (solo se prueban los fallos)")
+        else:
+            print("  4d) pip real contra PyPI: la libreria debe caer en el venv/ del proyecto")
+            sitio_antes = _paquetes_del_interprete(procesos, Path(sys.executable), RAIZ)
+            archivos.escribir_archivo(nombre, "requirements.txt", PAQUETE_REAL + chr(10))
+            # Aqui SI se sale a Internet: solo se neutraliza la config global de pip
+            # (indice corporativo del usuario) para que la prueba sea reproducible.
+            entorno_pypi = {
+                "PIP_CONFIG_FILE": _config_pip_vacia(config_pip),
+                "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+                "PIP_TIMEOUT": "60",
+            }
+            anteriores = _activar_entorno(entorno_pypi)
+            try:
+                cuarto = fabrica.preparar_entorno(nombre, instalar=True, timeout=300)
+            finally:
+                _restaurar_entorno(anteriores)
+                if original.strip():
+                    archivos.escribir_archivo(nombre, "requirements.txt", original)
+            print("\n".join("     " + linea for linea in cuarto.splitlines()[:14]))
+
+            _comprobar(
+                "Dependencias instaladas" in cuarto,
+                "PyPI real: el informe confirma la instalacion",
+            )
+            _comprobar(
+                "Comando exacto:" not in cuarto and "AVISO" not in cuarto,
+                "PyPI real: con exito no hay comando de reintento",
+            )
+            instalados = _paquetes_del_venv(procesos, fabrica, raiz)
+            _comprobar(
+                any(
+                    instalado.lower().startswith(PAQUETE_REAL_NOMBRE + "-")
+                    for instalado in instalados
+                ),
+                "PyPI real: la libreria cae en el site-packages del proyecto",
+                "site-packages: {}".format(", ".join(instalados) or "(vacio)"),
+            )
+            guion = "import pathlib, {0}; print(pathlib.Path({0}.__file__).resolve())".format(
+                PAQUETE_REAL_NOMBRE
+            )
+            codigo, salida, error = procesos.ejecutar(
+                [str(fabrica.interprete_venv(raiz)), "-c", guion], cwd=raiz, timeout=120
+            )
+            importado = salida.strip().splitlines()[-1] if codigo == 0 and salida.strip() else ""
+            _comprobar(
+                bool(importado) and importado.lower().startswith(str(raiz).lower()),
+                "PyPI real: el interprete del proyecto importa la libreria desde su venv",
+                importado or error.strip()[:200],
+            )
+            sitio_despues = _paquetes_del_interprete(procesos, Path(sys.executable), RAIZ)
+            _comprobar(
+                sitio_antes == sitio_despues,
+                "PyPI real: nada queda instalado fuera del venv del proyecto",
+                "site-packages del interprete de la verificacion: igual antes y despues",
+            )
+    finally:
+        shutil.rmtree(config_pip, ignore_errors=True)
 
 
 def preparar_entorno(fabrica, nombre: str) -> str:
@@ -426,6 +805,9 @@ def main(argv=None) -> int:
         prog="verificar_fabrica", description="Verifica la fabrica de proyectos end-to-end."
     )
     analizador.add_argument("--venv", action="store_true", help="crea el entorno virtual real")
+    analizador.add_argument(
+        "--pip", action="store_true", help="instala de verdad desde PyPI (necesita Internet)"
+    )
     analizador.add_argument("--real", action="store_true", help="usa el modelo real (consume tokens)")
     analizador.add_argument("--conservar", action="store_true", help="no borra la carpeta temporal")
     opciones = analizador.parse_args(argv)
@@ -443,6 +825,7 @@ def main(argv=None) -> int:
     import fabrica
     import herramientas_archivos as archivos
     import plantillas
+    import procesos
     import protocolo
     import rutas
 
@@ -459,7 +842,7 @@ def main(argv=None) -> int:
     try:
         paso_rutas(rutas, fabrica)
         paso_plantillas(plantillas)
-        paso_fabrica(fabrica, nombre, opciones.venv)
+        paso_fabrica(fabrica, archivos, procesos, nombre, opciones.venv, opciones.pip)
         paso_archivos(archivos, rutas, nombre)
         paso_programador(protocolo, archivos, nombre, opciones.real)
     except Exception as exc:  # cualquier fallo inesperado cuenta como fallo

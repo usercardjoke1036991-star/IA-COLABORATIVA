@@ -89,6 +89,7 @@ def test_crear_con_flag_instala_y_registra_estado_ok(sandbox, monkeypatch):
     assert llamadas[0]["comando"][-2:] == ["-r", "requirements.txt"]
     assert llamadas[0]["timeout"] == fabrica.TIMEOUT_INSTALACION
     assert "estado_dependencias=ok" in informe
+    assert "Comando exacto:" not in informe, "con exito no hay nada que reintentar"
     assert fabrica.ficha_proyecto("con-flag").estado == "creado"
 
 
@@ -129,6 +130,8 @@ def test_crear_con_flag_red_caida_deja_proyecto_creado_y_estado_pendiente(sandbo
     assert raiz.is_dir() and (raiz / "README.md").exists(), "el fallo de red no borra el proyecto"
     assert "estado_dependencias=pendiente_error_red" in informe
     assert "connection error" in informe, "el error de pip no debe perderse"
+    assert "Comando exacto:" in informe, "el informe debe dejar el comando para reintentar"
+    assert "-r requirements.txt" in informe
     assert "Reintenta con preparar_entorno(proyecto='red-caida', instalar=true)." in informe
     assert fabrica.ficha_proyecto("red-caida").estado == "creado (dependencias pendientes)"
 

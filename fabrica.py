@@ -537,6 +537,12 @@ def crear_proyecto(
         detalle_dependencias = "- Dependencias: estado_dependencias={} (manifiesto: {})".format(
             estado_dependencias, resultado["manifiesto"] or "ninguno"
         )
+        if resultado["comandos_ejecutados"] and estado_dependencias != "ok":
+            # Con el estado en pendiente, el comando exacto es lo que hay que
+            # repasar (o pegar) para reintentar: se muestra siempre.
+            detalle_dependencias += "\n  Comando exacto: {}".format(
+                " ".join(resultado["comandos_ejecutados"])
+            )
         if resultado["reintento"]:
             detalle_dependencias += " {}".format(resultado["reintento"])
         if resultado["stderr_resumen"]:

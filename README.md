@@ -215,6 +215,7 @@ completo en una carpeta temporal, con plantillas, git y archivos):
 ```powershell
 venv\Scripts\python.exe scripts\verificar_fabrica.py
 venv\Scripts\python.exe scripts\verificar_fabrica.py --venv   # crea tambien el venv
+venv\Scripts\python.exe scripts\verificar_fabrica.py --pip    # instala de verdad (necesita red)
 ```
 
 ### 4. Conectar Cursor
@@ -290,8 +291,8 @@ herramientas.
 | `fabrica.py` | Crea proyectos, aplica plantillas, `git init`, commits, registro, GitHub y el `venv/` con las librerias dentro del propio proyecto (`instalar_dependencias`). |
 | `orquestador.py` | Bucle autonomo desde consola: idea -> proyecto -> plan -> codigo -> pruebas -> commit. |
 | `prueba_loop.py` | Simulador del loop completo desde consola (sin abrir Cursor). |
-| `scripts/verificar_servidor.py` | Diagnostico de la instalacion + invocacion de herramientas por MCP. |
-| `scripts/verificar_fabrica.py` | Verificacion end-to-end de la fabrica en una carpeta temporal (no toca tu registro real). Acepta los tres estados de `gh`: sin instalar, instalado sin sesion y con sesion; si hay sesion, crea de verdad el repositorio remoto del proyecto temporal. |
+| `scripts/verificar_servidor.py` | Diagnostico de la instalacion + invocacion de herramientas por MCP. El paso 6 crea un proyecto de verdad a traves del tool `crear_proyecto`, pero redirige **la carpeta y el registro** a un temporal y comprueba al final que `datos/proyectos.json` no ha cambiado. |
+| `scripts/verificar_fabrica.py` | Verificacion end-to-end de la fabrica en una carpeta temporal (no toca tu registro real). Acepta los tres estados de `gh`: sin instalar, instalado sin sesion y con sesion; si hay sesion, crea de verdad el repositorio remoto del proyecto temporal. Sin banderas es rapido y **sin red**; `--venv` crea de verdad el `venv/` del proyecto temporal y `--pip` anade una instalacion real desde PyPI (esa si necesita Internet). |
 | `scripts/verificar_activador.py` | Verificacion end-to-end del **activador**: activa de verdad una carpeta vacia y ajena a la fabrica (por defecto, una temporal nueva), comprueba la capa + los artefactos del bucle + el registro, y repite la activacion comparando hashes SHA-256 para demostrar que la segunda pasada no cambia ni un byte. `--registro-aislado` no toca `datos/proyectos.json`. |
 | `scripts/instalar_global.py` | Instala el arranque automatico en TODA la maquina: reglas globales de Cursor + servidor MCP en `~/.cursor/mcp.json` y en los settings de Cline (fusionando, nunca pisando). |
 | `scripts/prueba_cliente_mcp.py` | Cliente MCP por `stdio` que habla con el servidor como lo hace Cursor. |
@@ -416,6 +417,14 @@ El `venv/` se crea por defecto (`ARQUITECTO_CREAR_VENV=true`). Instalar es
 Pedir dependencias **fuerza** el `venv/` aunque `ARQUITECTO_CREAR_VENV=false`:
 sin entorno virtual no hay donde instalar.
 
+En el flujo del IDE la garantia de "proyecto nuevo con librerias" **no** vive en
+esa variable, sino en el contrato que se copia a cada proyecto (`.clinerules`,
+`.cursorrules`/`arquitecto.mdc` y `AGENTS.md`): la IA del IDE llama a
+`preparar_entorno(instalar=true)` al crear un proyecto nuevo, y siempre por una
+unica via (crear con `instalar_dependencias=true` **o** preparar despues, nunca
+las dos). La herramienta, por defecto, no instala por su cuenta: asi manda el
+contrato y nunca se instala dos veces.
+
 **La instalacion nunca aborta la creacion.** Si `pip` falla, el proyecto existe
 igual y el informe lo dice con el estado real:
 
@@ -439,6 +448,11 @@ venv\Scripts\python.exe -m pip install -r requirements.txt   # o: -e .
 
 Si no hay `requirements.txt` pero si `pyproject.toml`, se instala con
 `pip install -e .` (modo editable) dentro del mismo `venv/`.
+
+Cuando el estado no es `ok`, el informe del proyecto incluye la linea
+`Comando exacto:` con el `pip` de su propio `venv/` ya montado (y el
+`-r requirements.txt` o `-e .` que toque): pegala tal cual en la consola. Si el
+estado es `ok`, esa linea no aparece porque no hay nada que reintentar.
 
 ### Git y GitHub
 
@@ -550,8 +564,9 @@ despues guarda la credencial (no vuelve a pedirla).
 Ademas hay integracion continua en `.github/workflows/ci.yml`:
 
 - **pruebas**: `pytest` con cobertura en Linux y Windows (matriz de runners) y, en
-  Windows, los tres verificadores (`verificar_servidor.py`, `verificar_fabrica.py`
-  y `verificar_activador.py --registro-aislado`).
+  Windows, los tres verificadores (`verificar_servidor.py`, `verificar_fabrica.py
+  --venv` — crea el entorno de verdad, pero sin red — y
+  `verificar_activador.py --registro-aislado`).
 - **calidad**: analisis con `SonarSource/sonarqube-scan-action`, que solo se
   ejecuta si existe el secreto `SONAR_TOKEN`; sin el, el CI sigue en verde.
 
@@ -826,7 +841,15 @@ venv\Scripts\python.exe arquitecto_mcp.py --reiniciar
 venv\Scripts\python.exe prueba_loop.py --mock
 venv\Scripts\python.exe prueba_loop.py --mock --bloqueo --exportar
 
-# Verificacion de la instalacion (16 comprobaciones, incluido el arranque global del IDE)
+# Verificacion de la fabrica en una carpeta temporal (72 comprobaciones; --venv crea
+# el venv real y --pip instala de verdad desde PyPI, que anade 5 comprobaciones mas)
+venv\Scripts\python.exe scripts\verificar_fabrica.py
+venv\Scripts\python.exe scripts\verificar_fabrica.py --venv
+venv\Scripts\python.exe scripts\verificar_fabrica.py --venv --pip
+
+# Verificacion de la instalacion (25 comprobaciones, incluido el arranque global del IDE
+# y el paso 6, que crea su proyecto y su registro en un temporal y comprueba al final
+# que datos/proyectos.json no ha cambiado)
 venv\Scripts\python.exe scripts\verificar_servidor.py
 
 # Verificacion end-to-end del ACTIVADOR: activa una carpeta ajena DOS veces,
@@ -879,7 +902,7 @@ funcionan antes de conectar el modelo real.
 | `gh repo create fallo` | GitHub CLI sin sesion o nombre ocupado: `gh auth login` y comprueba el nombre con `gh repo view`. |
 | El orquestador se para en la primera ronda | Revisa `datos/orquestador_<proyecto>.txt` y la ultima salida: o falta la API key (`arquitecto_mcp.py --check`) o el modelo no devolvio el formato `### ARCHIVO:`. |
 | El orquestador no encuentra `cline` | Instala Cline CLI o usa `--modo interno` (`ARQUITECTO_ORQUESTADOR=interno`). |
-| Quiero verificar que la fabrica funciona antes de usarla | `venv\Scripts\python.exe scripts\verificar_fabrica.py` (crea todo en una carpeta temporal y no toca tu registro real). |
+| Quiero verificar que la fabrica funciona antes de usarla | `venv\Scripts\python.exe scripts\verificar_fabrica.py` (crea todo en una carpeta temporal y no toca tu registro real). Con `--venv` crea ademas el entorno del proyecto de prueba y con `--pip` instala de verdad desde PyPI. |
 | El CI de GitHub falla al instante, sin jobs y sin duracion | El workflow es YAML invalido (GitHub no lo valida en tu maquina). Mira *Annotations* en la ejecucion: dice la linea (`Invalid workflow file: .github/workflows/ci.yml#LNN`). Valida antes de subir con `venv\Scripts\python.exe -c "import yaml;yaml.safe_load(open('.github/workflows/ci.yml',encoding='utf-8'))"`. Un `: ` (dos puntos y espacio) sin comillas en un `run:` ya lo rompe. |
 | Un check `SonarCloud Code Analysis` falla | Ese check no es el CI: es el analisis automatico de SonarQube Cloud. Entra en sonarcloud.io, mira los issues y el quality gate del proyecto; el detalle del enlace esta en el propio check. |
 | Una herramienta MCP que ejecuta `git` (`estado_git`, `estado_fabrica`, `preparar_entorno`...) se queda colgada y el IDE da timeout | El hijo heredaba el `stdin` del protocolo MCP y no arrancaba nunca (quedaban procesos `git` vivos minutos despues). Se arregla en `procesos.py`: todo proceso pasa por `procesos.ejecutar` con `stdin=DEVNULL` y `CREATE_NO_WINDOW`. Si añades una llamada nueva, no uses `subprocess.run` directo. |

@@ -1,4 +1,4 @@
-"""Registra este servidor MCP en Cursor y en Cline, sin editar nada a mano.
+r"""Registra este servidor MCP en Cursor y en Cline, sin editar nada a mano.
 
 Escribe (fusionando, no pisando lo que ya hubiera):
 
@@ -14,8 +14,8 @@ cualquier otro destino se rechaza antes de tocar el disco (regla SonarQube
 ``pythonsecurity:S2083`` / ``:S8707``).
 
 Uso:
-    venv\\\\Scripts\\\\python.exe scripts\\\\registrar_mcp.py
-    venv\\\\Scripts\\\\python.exe scripts\\\\registrar_mcp.py --nombre otro-nombre
+    venv\Scripts\python.exe scripts\registrar_mcp.py
+    venv\Scripts\python.exe scripts\registrar_mcp.py --nombre otro-nombre
 """
 
 from __future__ import annotations

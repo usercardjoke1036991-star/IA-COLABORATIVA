@@ -71,7 +71,9 @@ jobs:
           $ErrorActionPreference = 'Continue'
           $scripts = @(
             @{ ruta = 'scripts/verificar_servidor.py'; args = @() },
-            @{ ruta = 'scripts/verificar_fabrica.py'; args = @() },
+            # --venv: crea de verdad el venv/ del proyecto temporal. Sigue sin salir
+            # a Internet (instalar es opt-in), asi que el paso no depende de la red.
+            @{ ruta = 'scripts/verificar_fabrica.py'; args = @('--venv') },
             # El activador se prueba con registro aislado: el runner no ensucia
             # ningun registro y, al estar en un temporal, mide la idempotencia real.
             @{ ruta = 'scripts/verificar_activador.py'; args = @('--registro-aislado') }
