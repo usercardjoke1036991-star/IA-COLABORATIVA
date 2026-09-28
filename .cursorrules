@@ -54,12 +54,15 @@ Si el trabajo es algo nuevo y no un retoque del proyecto actual:
     archivos (`listar_archivos`, `leer_archivo`, `escribir_archivo`,
     `buscar_en_proyecto`...). Nunca escribas fuera de `proyectos/` ni en `.git`.
 
-## Delegar el codigo en el PROGRAMADOR externo
+## El codigo y la ejecucion son TUYOS (delegar esta prohibido)
 
-Si la tarea esta bien definida y el resultado sera largo, usa
-`pedir_codigo_al_programador(tarea, plan, proyecto, aplicar=true)`. Si una prueba
-falla, pasale la traza real con `corregir_con_el_programador(proyecto, error,
-aplicar=true)`. Cierra cada bloque con `commit_proyecto(proyecto, mensaje)`.
+Reparto CERRADO: el ARQUITECTO solo planifica, revisa y orquesta (no escribe
+codigo ni ejecuta nada); TU escribes todo el codigo y lo ejecutas. PROHIBIDO
+llamar a `pedir_codigo_al_programador`, `aplicar_codigo_del_programador` y
+`corregir_con_el_programador` (son el modo alternativo del orquestador de
+consola, no el flujo del IDE). Ante un error real: lee la traza completa,
+corrige con `escribir_archivo`, repite las pruebas y pega la salida real. Cierra
+cada bloque con `commit_proyecto(proyecto, mensaje)`.
 
 ## Herramientas auxiliares
 

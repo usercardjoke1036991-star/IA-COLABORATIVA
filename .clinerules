@@ -46,15 +46,19 @@ Cuando el trabajo no sea un retoque del proyecto actual sino algo nuevo:
 Nunca escribas fuera de la carpeta de proyectos ni toques `.git`: la fabrica lo
 bloquea a proposito.
 
-## 4. Delega el codigo voluminoso al PROGRAMADOR externo
+## 4. El codigo y la ejecucion son TUYOS (delegar esta prohibido)
 
-Si la tarea esta bien definida y el resultado va a ser largo (varios archivos,
-un modulo entero, una API completa), no lo escribas tu: llama a
-`pedir_codigo_al_programador` con la tarea, el plan del arquitecto y el
-`proyecto`, y usa `aplicar=true` para dejar los archivos en su sitio.
+Reparto CERRADO: el ARQUITECTO solo planifica, revisa y orquesta (no escribe
+codigo ni ejecuta nada); TU escribes todo el codigo y lo ejecutas.
 
-Si una prueba falla con un error real, pasale la traza con
-`corregir_con_el_programador` (`aplicar=true`) en vez de improvisar.
+- PROHIBIDO llamar a `pedir_codigo_al_programador`,
+  `aplicar_codigo_del_programador` y `corregir_con_el_programador`: son el modo
+  alternativo del orquestador de consola (`orquestador.py --modo interno`), no
+  el flujo del IDE. No las uses nunca.
+- Ante un error real: lee la traza COMPLETA, corrige tu con `escribir_archivo`,
+  vuelve a ejecutar las pruebas y pega la salida real. Si dudas del criterio,
+  pregunta al arquitecto (`consultar_arquitecto` o
+  `reportar_progreso(bloqueo=...)`): el te orienta, el codigo lo escribes TU.
 
 ## 5. Cerrar el ciclo (loop continuo)
 
@@ -95,4 +99,5 @@ como instalarlo: no lo intentes por otros medios.
 - No incluyas secretos, claves ni credenciales en el contexto que le envies.
 - No ignores su diagnostico: si senala un error, corrigelo antes de continuar.
 - No escribas en `proyectos/` ni en `datos/` a mano si puedes usar la fabrica.
+- No delegues el codigo ni la ejecucion en otro modelo: son tuyos (seccion 4).
 - No dejes una tarea a medias sin reportar el bloqueo al arquitecto.

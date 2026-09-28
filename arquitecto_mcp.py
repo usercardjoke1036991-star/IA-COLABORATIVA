@@ -36,7 +36,9 @@ ENTORNO, GIT Y GITHUB
   commit_proyecto         Guarda los cambios en un commit.
   publicar_en_github      Crea el repo remoto con gh y sube el proyecto.
 
-PROGRAMADOR (segundo modelo: escribe el codigo)
+PROGRAMADOR (segundo modelo: escribe el codigo) - SOLO MODO CONSOLA
+  El IDE no usa estas herramientas: el ARQUITECTO planifica/revisa/orquesta y la
+  IA del IDE escribe el codigo y lo ejecuta (regla de orquestacion cerrada).
   estado_programador        Diagnostico del rol (modelo, turnos, memoria).
   pedir_codigo_al_programador  Pide los archivos completos de una tarea.
   aplicar_codigo_del_programador  Aplica un texto con '### ARCHIVO:' al proyecto.
@@ -594,6 +596,11 @@ def construir_servidor():
     ) -> str:
         """Pide al PROGRAMADOR EXTERNO (segundo modelo) el codigo completo de una tarea.
 
+        SOLO MODO CONSOLA. La regla de orquestacion del IDE es CERRADA: el
+        ARQUITECTO planifica y la IA del IDE escribe el codigo y lo ejecuta, asi
+        que desde el IDE NO se llama a esta herramienta. Esta reservada al modo
+        interno de `orquestador.py`, donde no hay agente que edite archivos.
+
         El ARQUITECTO decide y el PROGRAMADOR escribe. Usalo cuando la tarea este
         bien definida y quieras los archivos completos de una vez.
 
@@ -633,7 +640,8 @@ def construir_servidor():
     def aplicar_codigo_del_programador(proyecto: str, codigo: str) -> str:
         """Escribe en el proyecto los archivos de un texto con formato '### ARCHIVO:'.
 
-        Sirve cuando el codigo viene de fuera (otra IA, un chat, el orquestador):
+        SOLO MODO CONSOLA (en el IDE se escribe con `escribir_archivo`): sirve
+        cuando el codigo viene de fuera (otra IA, un chat, el orquestador):
         se validan las rutas contra el sandbox y se guardan los archivos completos.
 
         Args:
@@ -671,6 +679,9 @@ def construir_servidor():
         aplicar: bool = False,
     ) -> str:
         """Devuelve un error real de ejecucion al PROGRAMADOR para que lo corrija.
+
+        SOLO MODO CONSOLA: en el IDE, la propia IA que escribe el codigo corrige
+        la traza con `escribir_archivo` y repite las pruebas.
 
         Args:
             proyecto: nombre del proyecto.

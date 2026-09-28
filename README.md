@@ -157,8 +157,8 @@ tuvieras. Alternativa multiplataforma: `venv\Scripts\python.exe scripts\registra
 Ya estan incluidas y activas:
 
 - `.clinerules` — reglas para Cline: cuando consultar al Arquitecto, cuando crear
-  un proyecto con la fabrica, cuando delegar en el Programador externo y cuando
-  commitear.
+  un proyecto con la fabrica, que **todo el codigo y la ejecucion son de la IA
+  del IDE** (delegar en el segundo modelo esta prohibido) y cuando commitear.
 - `.cursorrules` — formato clasico para Cursor (sigue funcionando).
 - `.cursor/rules/arquitecto.mdc` — formato moderno de Cursor.
 
@@ -236,7 +236,9 @@ duplicadas).
 
 `crear_proyecto` no deja solo el andamiaje: **cualquier** combinacion de
 plantillas recibe ademas la capa de orquestacion, de modo que el proyecto se
-puede abrir directamente con Cline o Cursor y la IA ya sabe como trabajar.
+puede abrir directamente con Cline o Cursor y la IA ya sabe como trabajar, con un
+reparto **cerrado**: el arquitecto planifica, revisa y orquesta; la IA del IDE
+escribe todo el codigo y lo ejecuta.
 
 | Archivo | Para que sirve |
 |---|---|
@@ -252,8 +254,9 @@ Esas reglas obligan a la IA del IDE a:
    con la peticion literal del usuario y el contexto real del codigo.
 2. **Ejecutar de verdad** (`preparar_entorno`, `venv/Scripts/python.exe -m pytest -q`)
    y pegar la salida real en lugar de suponer resultados.
-3. **Auto-repararse**: ante una traza real, devolversela al PROGRAMADOR externo
-   con `corregir_con_el_programador(aplicar=true)` y volver a probar.
+3. **Auto-repararse con sus propias manos**: ante una traza real, corregir el
+   archivo con `escribir_archivo` y repetir las pruebas (el arquitecto orienta,
+   pero el codigo nunca lo escribe otro modelo).
 4. **Pararse y pedir credenciales** con el formato `BLOQUEO: CREDENCIALES`
    (variable, donde se consigue y formato esperado), dejando antes el campo
    vacio en `.env`: nunca se inventan claves ni mocks silenciosos.
@@ -334,8 +337,13 @@ Opciones utiles: `--sin-probar`, `--publicar`, `--modo interno|cline`, `--auto`,
 
 ## El PROGRAMADOR externo (segundo modelo)
 
-El rol `ejecutor` permite que el codigo no lo escriba la IA del IDE, sino un
-segundo modelo mas barato. El contrato es un formato analizable:
+**Solo modo consola.** El rol `ejecutor` (segundo modelo, mas barato) lo usa
+`orquestador.py` en su modo interno: ahi no hay ningun agente que edite archivos.
+En el IDE el reparto es **cerrado** (el arquitecto planifica y la IA del IDE
+escribe y ejecuta), asi que estas herramientas estan **prohibidas** dentro del
+IDE: la propia IA del IDE corrige sus errores con `escribir_archivo`.
+
+El contrato es un formato analizable:
 
 ````
 ### ARCHIVO: src/saludar.py

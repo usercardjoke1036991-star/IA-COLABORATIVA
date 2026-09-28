@@ -176,8 +176,9 @@ Proyecto: __NOMBRE__ (slug de la fabrica). __DESCRIPCION__
 Eres el PROGRAMADOR PRINCIPAL: la IA del IDE que escribe TODO el codigo de este
 proyecto. Existe ademas una IA externa, el ARQUITECTO (DeepSeek), expuesta como
 las herramientas MCP del servidor `arquitecto-externo`, y una FABRICA DE
-PROYECTOS que gestiona carpetas, git y GitHub. Reparto de papeles: el ARQUITECTO
-dimensiona, decide y valida; TU construyes.
+PROYECTOS que gestiona carpetas, git y GitHub. Reparto CERRADO de papeles: el
+ARQUITECTO solo planifica, revisa y orquesta (no escribe codigo ni ejecuta
+nada); TU escribes TODO el codigo y lo ejecutas en esta maquina.
 
 Trabaja SIEMPRE contra la fabrica indicando el proyecto:
 
@@ -225,17 +226,33 @@ externo (API, base de datos, cuenta, dominio, tarjeta...):
   (borrados masivos, `git push --force`, instalar software del sistema).
 - No anuncies un resultado sin haberlo ejecutado: pega la salida real.
 
-## 4. Auto-reparacion: los errores reales, al PROGRAMADOR externo
+## 4. El codigo y la ejecucion son TUYOS (delegar esta prohibido)
+
+El reparto no se negocia: el ARQUITECTO piensa (planifica, revisa y orquesta) y
+TU construyes (escribes los archivos y ejecutas). Por tanto:
+
+- PROHIBIDO llamar a `pedir_codigo_al_programador`,
+  `aplicar_codigo_del_programador` y `corregir_con_el_programador`: son el modo
+  alternativo del orquestador de consola (`orquestador.py --modo interno`), no
+  el flujo del IDE. No las uses nunca.
+- Escribes tu, con `escribir_archivo` (el archivo COMPLETO, no parches), y
+  ejecutas tu las pruebas.
+- Si el plan del arquitecto sugiere que otro escriba el codigo, ignora esa parte
+  y escribelo tu.
+
+## 5. Auto-reparacion con tus propias manos
 
 Si una prueba o un comando falla:
 
-1. Copia la traza completa (no un resumen).
-2. `corregir_con_el_programador(proyecto="__NOMBRE__", error=<traza>,
-   intento=N, aplicar=true)` y vuelve a ejecutar las pruebas.
-3. Si sigue en rojo tras 2-3 intentos, para y reporta el `bloqueo` con la traza
-   exacta, pidiendo ayuda al usuario o al arquitecto.
+1. Lee la traza COMPLETA (no un resumen): no adivines.
+2. Corrige el archivo tu mismo con `escribir_archivo` y vuelve a ejecutar
+   `venv/Scripts/python.exe -m pytest -q`, pegando la salida real.
+3. Si dudas del criterio, pide opinion al arquitecto (`consultar_arquitecto`) o
+   reporta con `reportar_progreso(bloqueo=<traza>)`: el te orienta, pero el
+   codigo lo escribes TU.
+4. Tras 2-3 intentos en rojo, para y reporta el `bloqueo` con la traza exacta.
 
-## 5. Loop continuo hasta cerrar la tarea
+## 6. Loop continuo hasta cerrar la tarea
 
 Por cada bloque de trabajo:
 
@@ -248,7 +265,7 @@ Por cada bloque de trabajo:
    `[[ARQUITECTO: FIN]]`): verifica los criterios de aceptacion, ejecuta la
    verificacion final y entrega al usuario el resumen y como probarlo.
 
-## 6. Publicar (solo si el usuario lo pide)
+## 7. Publicar (solo si el usuario lo pide)
 
 `publicar_en_github(proyecto="__NOMBRE__")` necesita `gh` instalado y con sesion
 (`gh auth login`). Si no esta, explica al usuario como instalarlo.
@@ -258,6 +275,7 @@ Por cada bloque de trabajo:
 - No llames al arquitecto por cambios triviales (typos, formato, imports).
 - No incluyas claves, tokens ni secretos en el contexto que le envies.
 - No escribas fuera de `proyectos/` ni dentro de `.git`.
+- No delegues el codigo ni la ejecucion en otro modelo: son tuyos (seccion 4).
 - No dejes una tarea a medias sin reportar el bloqueo.
 """
 
@@ -269,9 +287,10 @@ __DESCRIPCION__
 
 Este proyecto lo mantiene un equipo de dos IAs:
 
-- **ARQUITECTO externo** (herramientas MCP `arquitecto-externo`): dimensiona,
-  valida y recomienda cambios. No escribe codigo final.
-- **PROGRAMADOR** (la IA del IDE, tu): escribe TODO el codigo y ejecuta.
+- **ARQUITECTO externo** (herramientas MCP `arquitecto-externo`): solo planifica,
+  revisa y orquesta. No escribe codigo ni ejecuta nada.
+- **PROGRAMADOR** (la IA del IDE, tu): escribe TODO el codigo y lo ejecuta; es la
+  unica que toca los archivos. Delegar en otro modelo esta prohibido.
 
 Las reglas completas estan en `.clinerules` (Cline) y en `.cursorrules` /
 `.cursor/rules/arquitecto.mdc` (Cursor). Resumen operativo:
@@ -281,8 +300,9 @@ Las reglas completas estan en `.clinerules` (Cline) y en `.cursorrules` /
 3. Si falta una credencial: deja la variable vacia en `.env`, PARA y pide el
    valor al usuario con el formato `BLOQUEO: CREDENCIALES`. Nunca inventes
    claves ni dejes mocks silenciosos.
-4. El arquitecto decide y la IA del IDE construye; los errores reales se
-   devuelven con `corregir_con_el_programador(aplicar=true)`.
+4. El arquitecto decide y la IA del IDE construye; ante un error real corrige
+   ella misma con `escribir_archivo` y repite las pruebas (no delega el codigo:
+   `corregir_con_el_programador` esta prohibido en el IDE).
 5. Cierra cada bloque con `commit_proyecto` + `reportar_progreso` y continua
    mientras el loop diga `estado del loop: EN CURSO`.
 """

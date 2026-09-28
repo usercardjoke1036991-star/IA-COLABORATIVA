@@ -37,11 +37,18 @@ MARCADORES = ("__NOMBRE__", "__DESCRIPCION__", "__PAQUETE__", "__FECHA__", "__PL
 PIEZAS_DEL_PROTOCOLO = (
     "consultar_arquitecto",
     "reportar_progreso",
-    "corregir_con_el_programador",
+    "escribir_archivo",
     "commit_proyecto",
     "preparar_entorno",
     "estado del loop: TAREA TERMINADA",
     "BLOQUEO: CREDENCIALES",
+)
+
+#: Herramientas del modo consola que las reglas del IDE prohiben expresamente.
+HERRAMIENTAS_PROHIBIDAS_EN_EL_IDE = (
+    "pedir_codigo_al_programador",
+    "aplicar_codigo_del_programador",
+    "corregir_con_el_programador",
 )
 
 
@@ -66,6 +73,22 @@ def test_las_reglas_explican_el_protocolo_y_el_proyecto():
     assert 'proyecto="demo-orquestado"' in reglas
     assert "venv/Scripts/python.exe" in reglas, "no se indica como ejecutar las pruebas"
     assert "Nunca" in reglas or "nunca" in reglas, "no se prohibe inventar credenciales"
+
+
+def test_las_reglas_prohiben_delegar_el_codigo():
+    """El arquitecto solo planifica: el codigo y la ejecucion son de la IA del IDE."""
+    andamiaje = plantillas.construir("python", nombre="Demo")
+    reglas = andamiaje.archivos[".clinerules"]
+
+    assert "PROHIBIDO" in reglas
+    for delegada in HERRAMIENTAS_PROHIBIDAS_EN_EL_IDE:
+        assert delegada in reglas, "{} debe aparecer como prohibida".format(delegada)
+    assert "escribir_archivo" in reglas, "el codigo lo escribe la IA del IDE"
+    assert "Auto-reparacion con tus propias manos" in reglas
+
+    resumen = andamiaje.archivos["AGENTS.md"]
+    assert "solo planifica" in resumen
+    assert "Delegar en otro modelo esta prohibido" in resumen
 
 
 def test_los_tres_formatos_de_reglas_comparten_el_mismo_protocolo():

@@ -51,12 +51,14 @@ Si el trabajo no es un retoque del proyecto actual sino algo nuevo:
 
 Nunca escribas fuera de `proyectos/` ni dentro de `.git`: el sandbox lo bloquea.
 
-## Delegar el codigo en el PROGRAMADOR externo
+## El codigo y la ejecucion son TUYOS (delegar esta prohibido)
 
-Si la tarea esta bien definida y el resultado sera largo, usa
-`pedir_codigo_al_programador(tarea, plan, proyecto, aplicar=true)` y deja que el
-segundo modelo entregue los archivos completos. Si una prueba falla, pasale la
-traza real con `corregir_con_el_programador(proyecto, error, aplicar=true)`.
+Reparto CERRADO: el ARQUITECTO solo planifica, revisa y orquesta (no escribe
+codigo ni ejecuta nada); TU escribes todo el codigo y lo ejecutas. PROHIBIDO
+`pedir_codigo_al_programador`, `aplicar_codigo_del_programador` y
+`corregir_con_el_programador` (modo alternativo del orquestador de consola).
+Ante un error real: lee la traza completa, corrige con `escribir_archivo`,
+repite las pruebas y pega la salida real.
 
 ## Git y GitHub
 
