@@ -37,7 +37,13 @@ CLAVES_SENSIBLES = (
 #: Patrones de secreto que se tachan aunque no vengan de un ``.env``.
 PATRONES_SECRETO: Tuple[Tuple[re.Pattern, str], ...] = (
     (re.compile(r"sk-[A-Za-z0-9_\-]{12,}"), "***CLAVE***"),
+    (re.compile(r"sk_live_[0-9A-Za-z]{16,}"), "***CLAVE-STRIPE***"),
     (re.compile(r"gh[pousr]_[A-Za-z0-9]{16,}"), "***TOKEN-GITHUB***"),
+    (re.compile(r"github_pat_[A-Za-z0-9_]{20,}"), "***TOKEN-GITHUB***"),
+    (re.compile(r"glpat-[A-Za-z0-9_\-]{20,}"), "***TOKEN-GITLAB***"),
+    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "***CLAVE-AWS***"),
+    (re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{10,}"), "***TOKEN-SLACK***"),
+    (re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b"), "***CLAVE-GOOGLE***"),
     (re.compile(r"eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}"), "***JWT***"),
     (
         re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"),

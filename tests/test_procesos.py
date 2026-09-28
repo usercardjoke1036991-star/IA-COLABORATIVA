@@ -136,6 +136,82 @@ def test_git_disponible_no_se_cuelga():
     assert version == "" or "git version" in version
 
 
+#: Guion de un hijo rebelde: abre un nieto que tambien duerme y despues se cuelga.
+#: Espera medio segundo antes de crear el nieto para que el Job Object ya este
+#: asignado: asi se mide el corte del arbol, no una carrera.
+GUION_HIJO_CON_NIETO = (
+    "import os, pathlib, subprocess, sys, time\n"
+    "time.sleep(0.5)\n"
+    "nieto = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])\n"
+    "pathlib.Path(sys.argv[1]).write_text('{} {}'.format(os.getpid(), nieto.pid))\n"
+    "time.sleep(120)\n"
+)
+
+
+def _sigue_vivo(pid: int) -> bool:
+    """True si ese PID existe todavia (``tasklist`` en Windows, ``/proc``/``ps`` fuera)."""
+    if sys.platform == "win32":
+        _, salida, _ = procesos.ejecutar(
+            ["tasklist", "/FI", "PID eq {}".format(pid), "/NH"], cwd=RAIZ, timeout=30
+        )
+        return str(pid) in salida
+    if Path("/proc/{}".format(pid)).exists():
+        return True
+    codigo, _ = procesos.ejecutar(["ps", "-p", str(pid)], cwd=RAIZ, timeout=30)
+    return codigo == 0
+
+
+def test_el_timeout_mata_tambien_a_los_nietos(tmp_path):
+    """Prueba adversarial: se corta el ARBOL, no solo al padre.
+
+    Matar solo al padre dejaba vivos a los nietos (cada uno con su consola), que
+    es el sintoma real del cuelgue. Aqui el hijo abre un nieto y los dos duermen:
+    tras el corte ninguno puede seguir vivo.
+    """
+    marcador = tmp_path / "pids.txt"
+    guion = tmp_path / "cuelga.py"
+    guion.write_text(GUION_HIJO_CON_NIETO, encoding="utf-8")
+
+    inicio = time.time()
+    with pytest.raises(subprocess.TimeoutExpired):
+        procesos.ejecutar(
+            [sys.executable, str(guion), str(marcador)], cwd=tmp_path, timeout=8
+        )
+    duracion = time.time() - inicio
+
+    assert duracion < 45, "el helper se quedo esperando al hijo rebelde"
+    assert marcador.exists(), "el hijo no llego a crear el nieto"
+    pid_hijo, pid_nieto = (int(pieza) for pieza in marcador.read_text().split())
+    for _ in range(20):  # margen para que Windows libere handles e hilos
+        if not _sigue_vivo(pid_hijo) and not _sigue_vivo(pid_nieto):
+            break
+        time.sleep(0.5)
+    assert not _sigue_vivo(pid_hijo), "el hijo sigue vivo despues del corte"
+    assert not _sigue_vivo(pid_nieto), "el nieto sobrevivio: no se corto el arbol"
+
+
+def test_el_job_object_se_abre_donde_el_sistema_lo_permite():
+    """El Job Object es el mecanismo fuerte del corte por tiempo."""
+    job = procesos._abrir_job()  # noqa: SLF001 - se prueba el contrato interno
+    try:
+        if sys.platform == "win32":
+            assert job, "Windows deberia permitir un Job Object para matar el arbol"
+        else:
+            assert job == 0, "fuera de Windows el corte usa el grupo de procesos"
+    finally:
+        procesos._cerrar_job(job)  # noqa: SLF001
+
+
+def test_matar_arbol_de_un_proceso_ya_muerto_no_rompe(tmp_path):
+    """El corte de emergencia es tolerante: nunca lanza desde la limpieza."""
+    proceso = subprocess.Popen(
+        [sys.executable, "-c", "pass"], stdin=subprocess.DEVNULL, cwd=str(tmp_path)
+    )
+    proceso.wait(timeout=30)
+
+    procesos._matar_arbol(proceso)  # noqa: SLF001 - no debe lanzar nada
+
+
 @pytest.mark.parametrize("nombre", MODULOS_CON_PROCESOS)
 def test_regresion_ningun_modulo_lanza_subprocess_directo(nombre):
     """Si alguien vuelve a ``subprocess.run``, el cuelgue del MCP vuelve con el."""

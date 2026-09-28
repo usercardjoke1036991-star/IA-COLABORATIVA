@@ -21,19 +21,78 @@ Solucion: un unico punto de salida, :func:`ejecutar`, que
 2. no deja que Windows cree una consola nueva para el hijo
    (``CREATE_NO_WINDOW``; en otros sistemas no aplica),
 3. marca el entorno como no interactivo (git/gh fallan en vez de esperar datos),
-4. corta el hijo si se pasa del tiempo y libera las tuberias sin quedarse
-   esperando a un proceso rebelde.
+4. corta el ARBOL del hijo si se pasa del tiempo: en Windows lo mete en un
+   *Job Object* con ``KILL_ON_JOB_CLOSE`` (matar solo al padre deja vivos a los
+   nietos, cada uno con su propia consola), en POSIX lo lanza en su propio grupo
+   y mata al grupo entero. Despues libera las tuberias sin quedarse esperando a
+   un proceso rebelde.
 """
 
 from __future__ import annotations
 
+import ctypes
 import os
+import signal
 import subprocess
 from pathlib import Path
 from typing import Dict, Sequence, Tuple
 
 #: Segundos que se espera a un hijo ya matado antes de dar sus tuberias por perdidas.
 ESPERA_TRAS_MATAR = 5.0
+
+#: Segundos que se espera a ``taskkill`` cuando hay que cortar el arbol a mano.
+ESPERA_DE_TASKKILL = 10.0
+
+#: Clase de informacion de un Job Object con limites extendidos (Windows).
+_JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+
+#: Bandera que mata todos los procesos del job al cerrar su ultima referencia.
+_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+
+
+class _ContadoresES(ctypes.Structure):
+    """``IO_COUNTERS``: contadores de E/S que exige la estructura de limites."""
+
+    _fields_ = [
+        (nombre, ctypes.c_ulonglong)
+        for nombre in (
+            "ReadOperationCount",
+            "WriteOperationCount",
+            "OtherOperationCount",
+            "ReadTransferCount",
+            "WriteTransferCount",
+            "OtherTransferCount",
+        )
+    ]
+
+
+class _LimitesBasicos(ctypes.Structure):
+    """``JOBOBJECT_BASIC_LIMIT_INFORMATION`` (solo se usa ``LimitFlags``)."""
+
+    _fields_ = [
+        ("PerProcessUserTimeLimit", ctypes.c_longlong),
+        ("PerJobUserTimeLimit", ctypes.c_longlong),
+        ("LimitFlags", ctypes.c_ulong),
+        ("MinimumWorkingSetSize", ctypes.c_size_t),
+        ("MaximumWorkingSetSize", ctypes.c_size_t),
+        ("ActiveProcessLimit", ctypes.c_ulong),
+        ("Affinity", ctypes.c_void_p),
+        ("PriorityClass", ctypes.c_ulong),
+        ("SchedulingClass", ctypes.c_ulong),
+    ]
+
+
+class _LimitesExtendidos(ctypes.Structure):
+    """``JOBOBJECT_EXTENDED_LIMIT_INFORMATION``: aqui vive ``KILL_ON_JOB_CLOSE``."""
+
+    _fields_ = [
+        ("BasicLimitInformation", _LimitesBasicos),
+        ("IoInfo", _ContadoresES),
+        ("ProcessMemoryLimit", ctypes.c_size_t),
+        ("JobMemoryLimit", ctypes.c_size_t),
+        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+        ("PeakJobMemoryUsed", ctypes.c_size_t),
+    ]
 
 #: Variables que evitan que git/gh se queden pidiendo datos por una consola que no hay.
 ENTORNO_NO_INTERACTIVO = {
@@ -49,6 +108,100 @@ def flags_sin_consola() -> int:
     if os.name != "nt":
         return 0
     return int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+
+def _abrir_job() -> int:
+    """Crea el Job Object donde se mete el hijo (0 si no aplica o no se puede).
+
+    Con ``KILL_ON_JOB_CLOSE`` el sistema mata TODOS los procesos del job cuando se
+    cierra su ultima referencia: es lo que garantiza que no queden nietos vivos
+    cuando hay que cortar por tiempo (matar solo al padre no los toca).
+    """
+    if os.name != "nt":
+        return 0
+    try:
+        crear = ctypes.windll.kernel32.CreateJobObjectW
+        crear.restype = ctypes.c_void_p
+        crear.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
+        job = crear(None, None)
+        if not job:
+            return 0
+        limites = _LimitesExtendidos()
+        limites.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        ajustado = ctypes.windll.kernel32.SetInformationJobObject(
+            ctypes.c_void_p(job),
+            _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+            ctypes.byref(limites),
+            ctypes.sizeof(limites),
+        )
+        if not ajustado:
+            _cerrar_job(job)
+            return 0
+        return job
+    except (AttributeError, OSError, TypeError, ValueError):
+        return 0
+
+
+def _meter_en_job(job: int, proceso: subprocess.Popen) -> bool:
+    """Mete al hijo recien creado en el job: desde ahi, sus nietos son del job."""
+    if not job or os.name != "nt":
+        return False
+    try:
+        handle = int(proceso._handle)  # noqa: SLF001 - handle real en Windows
+    except (AttributeError, TypeError, ValueError):
+        return False
+    try:
+        return bool(
+            ctypes.windll.kernel32.AssignProcessToJobObject(
+                ctypes.c_void_p(job), ctypes.c_void_p(handle)
+            )
+        )
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+def _cerrar_job(job: int) -> None:
+    """Suelta el job: cualquier proceso que quede dentro muere al cerrarlo."""
+    if not job or os.name != "nt":
+        return
+    try:
+        ctypes.windll.kernel32.CloseHandle(ctypes.c_void_p(job))
+    except (AttributeError, OSError, ValueError):
+        pass
+
+
+def _terminar_job(job: int) -> None:
+    """Mata todos los procesos del job (padre, hijos y nietos)."""
+    if not job or os.name != "nt":
+        return
+    try:
+        ctypes.windll.kernel32.TerminateJobObject(ctypes.c_void_p(job), 1)
+    except (AttributeError, OSError, ValueError):
+        pass
+
+
+def _matar_arbol(proceso: subprocess.Popen) -> None:
+    """Corta el arbol sin Job Object: ``taskkill /T /F`` o el grupo de procesos."""
+    pid = getattr(proceso, "pid", None)
+    if not pid:
+        return
+    if os.name == "nt":
+        try:
+            subprocess.Popen(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                shell=False,
+                creationflags=flags_sin_consola(),
+            ).wait(timeout=ESPERA_DE_TASKKILL)
+        except (OSError, subprocess.SubprocessError):
+            pass
+        return
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGKILL)
+    except (OSError, AttributeError, ValueError):
+        pass
 
 
 def entorno(extra: Dict[str, str] | None = None) -> Dict[str, str]:
@@ -72,6 +225,8 @@ def kwargs_proceso(extra: Dict[str, str] | None = None) -> Dict[str, object]:
         "env": entorno(extra),
         "creationflags": flags_sin_consola(),
         "shell": False,
+        # En POSIX el hijo estrena grupo propio: asi se puede matar el arbol entero.
+        "start_new_session": os.name != "nt",
     }
 
 
@@ -94,23 +249,36 @@ def ejecutar(
         FileNotFoundError: si el ejecutable no existe o no esta en el PATH.
         subprocess.TimeoutExpired: si el hijo no termina dentro de ``timeout``.
     """
-    proceso = subprocess.Popen(
-        [str(pieza) for pieza in comando],
-        cwd=str(cwd),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        **kwargs_proceso(entorno_extra),
-    )
+    job = _abrir_job()
+    try:
+        proceso = subprocess.Popen(
+            [str(pieza) for pieza in comando],
+            cwd=str(cwd),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            **kwargs_proceso(entorno_extra),
+        )
+    except BaseException:
+        _cerrar_job(job)
+        raise
+    if job and not _meter_en_job(job, proceso):
+        _cerrar_job(job)  # no se pudo: el corte caera a taskkill /T /F
+        job = 0
     try:
         salida, error = proceso.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        _cortar(proceso)
+        _cortar(proceso, job)
+        raise
+    except BaseException:
+        _cortar(proceso, job)
         raise
     if proceso.returncode is None:  # defensivo: no deberia ocurrir
-        _cortar(proceso)
+        _cortar(proceso, job)
+    else:
+        _cerrar_job(job)
     return proceso.returncode, salida or "", error or ""
 
 
@@ -125,12 +293,23 @@ def ejecutar_texto(
     return codigo, "{}\n{}".format(salida, error).strip()
 
 
-def _cortar(proceso: subprocess.Popen) -> None:
-    """Mata el proceso y libera sus tuberias sin quedarse colgado esperandolo."""
+def _cortar(proceso: subprocess.Popen, job: int = 0) -> None:
+    """Corta el ARBOL del hijo y libera sus tuberias sin quedarse esperando.
+
+    Matar solo al padre no basta en Windows: los nietos (otro ``python.exe``, un
+    ``git`` con su propia consola...) siguen vivos minutos enteros, que es
+    exactamente el sintoma del cuelgue original. Con Job Object se van todos;
+    sin el, se cae a ``taskkill /PID <pid> /T /F``.
+    """
+    if job:
+        _terminar_job(job)
+    else:
+        _matar_arbol(proceso)
     try:
         proceso.kill()
     except OSError:
-        return
+        pass
+    _cerrar_job(job)
     try:
         proceso.communicate(timeout=ESPERA_TRAS_MATAR)
     except (subprocess.TimeoutExpired, OSError, ValueError):

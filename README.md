@@ -127,6 +127,45 @@ y devuelve el siguiente lote priorizado con `sugerir_mejoras`:
 
 ---
 
+## Flujo de trabajo de punta a punta (quien llama a quien)
+
+Con esta seccion se puede seguir una carpeta virgen de principio a fin sin abrir
+una linea de codigo:
+
+```
+TU (usuario)              IA del IDE (PROGRAMADOR)                 ARQUITECTO (API)
+    |                              |                                     |
+    |  "hazme X", abro la carpeta ->|                                    |
+    |                              | activar_proyecto()          [MCP]   |
+    |                              |   registra + capa + stack + kit     |
+    |                              | consultar_arquitecto(prompt, kit) ->|
+    |                              |<- plan accionable                   |
+    |                              | escribe el codigo y EJECUTA pruebas |
+    |                              | informe_de_trabajo(hechos, salida)  |
+    |                              | sugerir_mejoras()                 ->|
+    |                              |<- lote priorizado (EN CURSO)        |
+    |        ... se repite mientras el estado sea EN CURSO ...            |
+    |<-- resumen final y como probarlo  [[ARQUITECTO: FIN]] o PARAR ------|
+```
+
+| Paso | Quien llama | Que pasa | Artefactos que quedan |
+|---|---|---|---|
+| 1 | IA del IDE -> `activar_proyecto` | registra la carpeta, inyecta la capa, detecta el stack y el comando de pruebas | `.clinerules`, `.cursorrules`, `.cursor/rules/arquitecto.mdc`, `.cursor/mcp.json`, `AGENTS.md`, `.env.example`, `INFORME.md`, `SUGERENCIAS.md`, `.vscode/tasks.json` |
+| 2 | IA del IDE -> `consultar_arquitecto` | el arquitecto dimensiona la idea con tu prompt **literal** y el kit de arranque | `datos/historial_arquitecto.json` |
+| 3 | IA del IDE (el agente) | escribe TODO el codigo y lo ejecuta de verdad en esta maquina | el codigo del proyecto |
+| 4 | IA del IDE -> `informe_de_trabajo` | cierra la ronda con la evidencia real pegada tal cual | `INFORME.md`, `datos/sesiones/<proyecto>/turno-NN.json` |
+| 5 | IA del IDE -> `sugerir_mejoras` | el arquitecto lee informe + contexto saneado + memoria y prioriza | `SUGERENCIAS.md`, `turno-NN.json` |
+| 6 | IA del IDE -> `estado_de_sesion` | resumen local de la sesion (no gasta tokens) | (nada) |
+| 7 | IA del IDE -> `commit_proyecto` | deja el punto de retorno en git | commit + ficha en `datos/proyectos.json` |
+
+Reparto cerrado: el ARQUITECTO solo planifica y revisa (no escribe codigo ni
+ejecuta nada), la FABRICA solo gestiona carpetas, git y registro, y el codigo y las
+pruebas son **siempre** de la IA del IDE. El bucle para con `[[ARQUITECTO: FIN]]`,
+si el usuario escribe `PARAR` o al llegar a `ARQUITECTO_MAX_RONDAS`.
+
+
+---
+
 ## Puesta en marcha (5 minutos)
 
 ### 1. Instalar
@@ -247,7 +286,7 @@ herramientas.
 | `rutas.py` | **Sandbox**: normaliza nombres y valida que todo quede dentro de las raices permitidas. |
 | `plantillas.py` | Catalogo de plantillas (7): archivos, notas y requirements fusionables. Inyecta ademas la **capa de orquestacion** (`.clinerules`, `.cursorrules`, `AGENTS.md`, `.cursor/mcp.json`, `.env.example`) en todo proyecto nuevo. |
 | `herramientas_archivos.py` | Unica puerta a disco: leer, escribir, listar, buscar, mover y borrar. |
-| `procesos.py` | Unica puerta a procesos externos (`git`, `gh`, `python`, `pytest`): no hereda el `stdin` del MCP, no abre consola nueva en Windows y corta al hijo por tiempo. Sin esto, el primer `git` lanzado desde el servidor se queda colgado (bug real: `estado_fabrica` moria por timeout del IDE). |
+| `procesos.py` | Unica puerta a procesos externos (`git`, `gh`, `python`, `pytest`): no hereda el `stdin` del MCP, no abre consola nueva en Windows y corta el **arbol** del hijo por tiempo (Job Object con `KILL_ON_JOB_CLOSE` en Windows, grupo propio de procesos en POSIX), porque matar solo al padre dejaba nietos vivos. Sin esto, el primer `git` lanzado desde el servidor se queda colgado (bug real: `estado_fabrica` moria por timeout del IDE). |
 | `fabrica.py` | Crea proyectos, aplica plantillas, `git init`, commits, registro y GitHub. |
 | `orquestador.py` | Bucle autonomo desde consola: idea -> proyecto -> plan -> codigo -> pruebas -> commit. |
 | `prueba_loop.py` | Simulador del loop completo desde consola (sin abrir Cursor). |
@@ -789,6 +828,7 @@ funcionan antes de conectar el modelo real.
 | Una herramienta MCP que ejecuta `git` (`estado_git`, `estado_fabrica`, `preparar_entorno`...) se queda colgada y el IDE da timeout | El hijo heredaba el `stdin` del protocolo MCP y no arrancaba nunca (quedaban procesos `git` vivos minutos despues). Se arregla en `procesos.py`: todo proceso pasa por `procesos.ejecutar` con `stdin=DEVNULL` y `CREATE_NO_WINDOW`. Si añades una llamada nueva, no uses `subprocess.run` directo. |
 | `test_regresion_ningun_modulo_lanza_subprocess_directo` falla | Alguien ha vuelto a llamar a `subprocess.run`/`subprocess.Popen` en un modulo de produccion. Usa `procesos.ejecutar` (o `ejecutar_texto`) o el cuelgue del punto anterior reaparece. |
 | Abro una carpeta nueva y el agente no llama a `activar_proyecto` | Falta el arranque global (se instala una sola vez): `venv\Scripts\python.exe scripts\instalar_global.py` y despues *Developer: Reload Window*. El **paso 4** de `scripts\verificar_servidor.py` dice exactamente que falta (reglas en `~/.cursor/rules`, servidor en `~/.cursor/mcp.json` o en los `cline_mcp_settings.json`). |
+| El **terminal** del IDE se queda "running" y no vuelve el prompt | Es el `stdin` del terminal de Cursor (tuberia heredada), **no** el servidor MCP: el caso del MCP ya esta cubierto por `procesos.py`. Se dispara con comandos que abren hijos de consola (un `Get-ChildItem -Recurse` grande, un `|` encadenado sobre algo que ya lanza subprocesos...): el padre se queda esperando a que alguien cierre la entrada y el IDE corta por timeout. Mitigacion: no encadenes tuberias sobre comandos que lanzan subprocesos, redirige a un archivo y leelo despues, lanza `powershell -NoProfile` o el interprete del venv directamente, y usa `exit` para cerrar el shell si se ha quedado pegado. |
 | Quiero comprobar que el activador es idempotente de verdad | `venv\Scripts\python.exe scripts\verificar_activador.py`: activa una carpeta ajena dos veces y compara el SHA-256 de cada archivo. La segunda pasada tiene que dejar los mismos hashes y el kit tiene que decir "no habia nada que escribir". |
 | La IA pego una clave en el informe y no se si salio de la maquina | No sale: `mejora.sugerir_mejoras` sanea antes de llamar al proveedor el contexto del repo, el informe y la memoria de la sesion (patrones `sk-`/`ghp_`/JWT/PEM + los valores sensibles del `.env` del proyecto). Cubierto por `tests/test_sanea.py`. |
 | Un paso del CI muere en segundos con `Process completed with exit code 1` | `pwsh` en Actions usa `$ErrorActionPreference = 'Stop'`: si un script del repositorio escribe en **stderr** (los verificadores y los logs lo hacen a proposito), lo toma por error terminante y aborta el paso. Pon `$ErrorActionPreference = 'Continue'` al principio del `run:` y comprueba tu mismo `$LASTEXITCODE`. |

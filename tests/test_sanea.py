@@ -46,6 +46,24 @@ class ProveedorEspia:
         )
 
 
+#: Formatos de credencial que tiene que reconocer el saneador (matriz de riesgo).
+FORMATOS_DE_TOKEN = (
+    ("clave-openai", "sk-FAKE1234567890abcdef"),
+    ("clave-stripe", "sk_live_FAKE1234567890abcdef"),
+    ("token-github-clasico", "ghp_FAKEabcdefghijklmnopqrstuvwxyz01"),
+    ("token-github-fino", "github_pat_FAKEabcdefghijklmnopqrstuvwxyz01"),
+    ("token-gitlab", "glpat-FAKEabcdefghijklmnopqrs"),
+    ("clave-aws", "AKIAFAKE1234567890AB"),
+    ("token-slack", "xoxb-FAKE1234567890-abcdefghijklmnop"),
+    ("clave-google", "AIzaFAKE1234567890abcdefghijklmnopqrstu"),
+    (
+        "jwt",
+        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+    ),
+    ("clave-privada-pem", PEM_FAKE),
+)
+
+
 @pytest.fixture()
 def proyecto(sandbox):
     """Proyecto activado con secretos repartidos por el repo."""
@@ -116,3 +134,26 @@ def test_el_payload_sigue_llevando_el_contexto_util(proyecto, tmp_path):
     carga = espia.payload()
     assert "app-secretos" in carga
     assert "3 passed" in carga
+
+
+@pytest.mark.parametrize("nombre,credencial", FORMATOS_DE_TOKEN)
+def test_los_formatos_conocidos_salen_redactados(sandbox, tmp_path, nombre, credencial):
+    """Matriz de formatos: la credencial del README no puede llegar al payload."""
+    carpeta = sandbox / "proyectos" / "app-formatos"
+    carpeta.mkdir(parents=True, exist_ok=True)
+    (carpeta / "requirements.txt").write_text("pytest\n", encoding="utf-8")
+    activacion.activar(ruta=carpeta)
+    (carpeta / "README.md").write_text(
+        "# app\n\ncredencial de {}: {}\n".format(nombre, credencial), encoding="utf-8"
+    )
+
+    motor, espia = _arquitecto_espia(tmp_path)
+    mejora.informe_de_trabajo(
+        "app-formatos", hechos="prueba de {}".format(nombre), evidencia="pytest -q -> 1 passed"
+    )
+
+    mejora.sugerir_mejoras("app-formatos", arquitecto=motor)
+
+    carga = espia.payload()
+    assert credencial not in carga, "el formato '{}' no se redacto".format(nombre)
+    assert "***" in carga
