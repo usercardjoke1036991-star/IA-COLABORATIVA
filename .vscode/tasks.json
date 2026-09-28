@@ -1,0 +1,19 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Arquitecto: activar orquestacion",
+      "type": "shell",
+      "command": "\"C:/Users/Vexor/Downloads/Descargas1/IA COLABORATIVA/venv/Scripts/python.exe\" \"C:/Users/Vexor/Downloads/Descargas1/IA COLABORATIVA/scripts/activar.py\" --ruta \"${workspaceFolder}\"",
+      "runOptions": {
+        "runOn": "folderOpen"
+      },
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated",
+        "close": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}

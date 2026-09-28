@@ -127,6 +127,46 @@ def test_listar_proyectos_avisa_de_carpetas_sin_registrar(sandbox):
     assert "colado-a-mano" in salida
 
 
+def _ficha_activada(nombre: str, ruta):
+    return {
+        nombre: {
+            "nombre": nombre,
+            "ruta": str(ruta),
+            "plantillas": ["activado"],
+            "estado": "activado",
+        }
+    }
+
+
+def test_listar_proyectos_no_da_por_perdido_un_proyecto_activado(sandbox):
+    """Un proyecto activado fuera de ``proyectos/`` no es una carpeta perdida.
+
+    Regresion: el aviso comparaba el registro con las carpetas del sandbox, asi
+    que la raiz activada (que vive donde la tenga el usuario) salia como
+    "registrados cuya carpeta ya no esta" teniendo la carpeta delante.
+    """
+    carpeta = sandbox / "Descargas" / "Mi Proyecto"
+    carpeta.mkdir(parents=True)
+    fabrica.guardar_registro(_ficha_activada("mi-proyecto", carpeta))
+
+    salida = fabrica.listar_proyectos()
+
+    assert "mi-proyecto" in salida
+    assert "carpeta ya no esta" not in salida
+
+
+def test_listar_proyectos_si_avisa_si_la_ruta_fichada_desaparece(sandbox):
+    """Si la carpeta fichada ya no esta, el aviso se mantiene."""
+    fabrica.guardar_registro(
+        _ficha_activada("fantasma", sandbox / "Descargas" / "ya-no-esta")
+    )
+
+    salida = fabrica.listar_proyectos()
+
+    assert "carpeta ya no esta" in salida
+    assert "fantasma" in salida
+
+
 # --------------------------------------------------------------------------
 # Herramientas de archivos dentro de un proyecto
 # --------------------------------------------------------------------------

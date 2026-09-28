@@ -961,7 +961,22 @@ def listar_proyectos() -> str:
     if sueltas:
         lineas.append("Carpetas sin registrar (creadas a mano):")
         lineas.extend("  - {}".format(nombre) for nombre in sueltas)
-    faltantes = sorted(set(registro) - existentes)
+    def _sigue_en_disco(nombre: str) -> bool:
+        """True si la carpeta del proyecto existe donde dice su ficha.
+
+        Los proyectos ACTIVADOS pueden vivir fuera de ``proyectos/`` (la ficha
+        guarda su ruta real): mirar solo las carpetas del sandbox los daba por
+        perdidos teniendo la carpeta delante.
+        """
+        indicada = str(registro[nombre].get("ruta") or "").strip()
+        if not indicada:
+            return nombre in existentes
+        try:
+            return Path(indicada).expanduser().is_dir()
+        except (OSError, ValueError):
+            return False
+
+    faltantes = sorted(nombre for nombre in registro if not _sigue_en_disco(nombre))
     if faltantes:
         lineas.append("Registrados cuya carpeta ya no esta:")
         lineas.extend("  - {}".format(nombre) for nombre in faltantes)

@@ -94,6 +94,64 @@ def test_las_herramientas_trabajan_en_la_carpeta_registrada(carpeta_cruda):
     assert (carpeta_cruda / "src" / "x.py").exists()
 
 
+def test_las_herramientas_listan_la_carpeta_registrada(carpeta_cruda):
+    """Sin ``subcarpeta`` hay que listar la carpeta REAL de la ficha.
+
+    Regresion: la raiz se pedia a ``rutas.ruta_de_proyecto`` (que asume
+    ``proyectos/<slug>``), asi que un proyecto activado sobre una carpeta con
+    otro nombre respondia "no existe la ruta '.'" aunque su ficha fuera
+    correcta. Con ``subcarpeta`` si funcionaba: el fallo estaba solo en el
+    atajo de la raiz.
+    """
+    activacion.activar(ruta=carpeta_cruda)
+
+    salida = archivos.listar_proyecto("mi-app", profundidad=1)
+
+    assert "requirements.txt" in salida
+    assert ".clinerules" in salida
+
+
+def test_buscar_en_contenido_usa_la_carpeta_registrada(carpeta_cruda):
+    """La busqueda recursiva tambien arranca de la carpeta fichada."""
+    activacion.activar(ruta=carpeta_cruda)
+    (carpeta_cruda / "notas.md").write_text("aguja-unica\n", encoding="utf-8")
+
+    salida = archivos.buscar_en_contenido("mi-app", "aguja-unica")
+
+    assert "notas.md" in salida
+
+
+def test_buscar_archivos_por_patron_usa_la_carpeta_registrada(carpeta_cruda):
+    """La busqueda glob tambien arranca de la carpeta fichada."""
+    activacion.activar(ruta=carpeta_cruda)
+    (carpeta_cruda / "notas.md").write_text("hola\n", encoding="utf-8")
+
+    salida = archivos.buscar_archivos("mi-app", "*.md")
+
+    assert "notas.md" in salida
+
+
+def test_no_se_puede_borrar_la_raiz_de_un_proyecto_activado(carpeta_cruda):
+    """La proteccion de la raiz debe comparar con la carpeta fichada.
+
+    Regresion: comparaba con ``proyectos/<slug>``, asi que en un proyecto
+    activado el borrado recursivo de "." SI se llevaba por delante el proyecto
+    entero en vez de rechazarse.
+    """
+    activacion.activar(ruta=carpeta_cruda)
+
+    with pytest.raises(archivos.ErrorArchivo):
+        archivos.borrar("mi-app", ".", recursivo=True)
+
+    assert (carpeta_cruda / "requirements.txt").exists()
+
+
+def test_listar_un_proyecto_inexistente_sigue_avisando(sandbox):
+    """El atajo arreglado no debe tapar el caso normal: proyecto que no existe."""
+    with pytest.raises(archivos.ErrorArchivo):
+        archivos.listar_proyecto("no-existe-este-proyecto", profundidad=1)
+
+
 def test_tarea_de_arranque_usa_la_carpeta_abierta():
     tarea = activacion.tarea_de_arranque()
 

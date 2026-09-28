@@ -323,7 +323,10 @@ def borrar(proyecto: str, ruta: str, recursivo: bool = False) -> str:
 
     if not objetivo.exists():
         raise ErrorArchivo("No existe {}.".format(_relativa(objetivo, proyecto)))
-    if objetivo.resolve() == (rutas.ruta_de_proyecto(proyecto) if (proyecto or "").strip() else rutas.raiz_fabrica()):
+    # La raiz protegida es la de la FICHA (``base_de_proyecto``), no
+    # ``proyectos/<slug>``: si no, un proyecto activado sobre una carpeta con
+    # otro nombre se podia borrar entero con un borrado recursivo de ".".
+    if objetivo.resolve() == base_de_proyecto(proyecto):
         raise ErrorArchivo("No se puede borrar la raiz del proyecto: borra archivos concretos.")
     if objetivo.is_dir():
         if not recursivo:
@@ -414,7 +417,12 @@ def listar_proyecto(
             raiz, len(proyectos), "\n".join("- {}".format(nombre) for nombre in proyectos)
         )
 
-    objetivo = _resolver(proyecto, subcarpeta) if subcarpeta else rutas.ruta_de_proyecto(proyecto)
+    # Sin subcarpeta hay que listar la RAIZ del proyecto: se pide a
+    # ``_resolver``, que pasa por ``base_de_proyecto`` y respeta la ruta
+    # fichada. ``rutas.ruta_de_proyecto`` asume siempre ``proyectos/<slug>`` y
+    # dejaba invisible cualquier proyecto activado sobre una carpeta con otro
+    # nombre (o fuera de la carpeta de proyectos).
+    objetivo = _resolver(proyecto, subcarpeta or ".")
     if not objetivo.exists():
         raise ErrorArchivo(
             "No existe la ruta '{}' dentro de {}.".format(subcarpeta or ".", proyecto)
@@ -433,7 +441,7 @@ def buscar_archivos(proyecto: str, patron: str, max_resultados: int = 60) -> str
     """Busca archivos por patron glob (``*.py``, ``**/test_*.py``, ``main?.js``)."""
     if not (patron or "").strip():
         raise ErrorArchivo("Indica un patron, por ejemplo '*.py' o '**/test_*.py'.")
-    raiz = rutas.ruta_de_proyecto(proyecto)
+    raiz = base_de_proyecto(proyecto)
     if not raiz.exists():
         raise ErrorArchivo("El proyecto {} no existe.".format(proyecto))
 
@@ -471,7 +479,9 @@ def buscar_en_contenido(
     aguja = texto or ""
     if not aguja.strip():
         raise ErrorArchivo("Indica el texto a buscar.")
-    raiz = _resolver(proyecto, subcarpeta) if subcarpeta else rutas.ruta_de_proyecto(proyecto)
+    # Misma razon que en ``listar_proyecto``: la raiz del proyecto sale de la
+    # ficha registrada, no de ``proyectos/<slug>``.
+    raiz = _resolver(proyecto, subcarpeta or ".")
     if not raiz.exists():
         raise ErrorArchivo("No existe la ruta a buscar dentro de {}.".format(proyecto))
 
