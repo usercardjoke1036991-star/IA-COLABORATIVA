@@ -9,6 +9,9 @@ Comprueba, de verdad y paso a paso, que todo el sistema funciona:
    ``~/.cursor/mcp.json`` y en los ``cline_mcp_settings.json`` que existan.
 5. Se invoca una herramienta A TRAVES del gestor de MCP (no llamando a la
    funcion de Python directamente), para validar el camino real que usa Cursor.
+6. Se crea un proyecto con ``instalar_dependencias=true`` a traves del tool,
+   con pip apuntado a un puerto cerrado: la respuesta debe traer el estado
+   pendiente, el comando exacto y como reintentar.
 
 Por defecto se ejecuta en modo simulado (sin red ni API key). Con --real usa el
 proveedor configurado en tu .env y si consume tokens.
@@ -24,7 +27,9 @@ import argparse
 import asyncio
 import json
 import os
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -186,7 +191,37 @@ def paso_servidor():
         _ok("las {} herramientas esperadas estan registradas".format(len(HERRAMIENTAS_ESPERADAS)))
     if sobran:
         print("  nota: hay herramientas adicionales: {}".format(", ".join(sorted(sobran))))
+
+    _comprobar_esquema_instalar(servidor)
     return servidor
+
+
+def _comprobar_esquema_instalar(servidor) -> None:
+    """Verifica que el tool expone ``instalar_dependencias`` como opcional.
+
+    El contrato es ``bool | None`` con ``default=None``: sin argumento, el tool
+    decide segun ``ARQUITECTO_INSTALAR_DEPENDENCIAS``; con ``true``/``false``,
+    manda el usuario. Si el esquema no dejara el campo opcional, el agente del
+    IDE no podria distinguir "no lo he pedido" de "que se instale".
+    """
+    herramientas = getattr(getattr(servidor, "_tool_manager", None), "_tools", {})
+    herramienta = herramientas.get("crear_proyecto")
+    if herramienta is None:
+        _fallo("no se pudo leer el esquema de crear_proyecto")
+        return
+    esquema = getattr(herramienta, "parameters", None)
+    if hasattr(esquema, "model_json_schema"):
+        esquema = esquema.model_json_schema()
+    propiedades = (esquema or {}).get("properties", {}) if isinstance(esquema, dict) else {}
+    campo = propiedades.get("instalar_dependencias")
+    if not isinstance(campo, dict):
+        _fallo("crear_proyecto no declara instalar_dependencias en su esquema")
+        return
+    texto = json.dumps(campo)
+    if "boolean" in texto and "null" in texto and campo.get("default", "ausente") is None:
+        _ok("el esquema de crear_proyecto deja instalar_dependencias opcional", texto)
+    else:
+        _fallo("el esquema de instalar_dependencias no es opcional", texto)
 
 
 def _listar_herramientas(servidor):
@@ -361,6 +396,147 @@ def paso_invocacion(servidor) -> bool:
     return terminada
 
 
+#: Entorno que hace fallar a pip al instante: un indice en un puerto cerrado de
+#: la propia maquina. El paso 6 lo usa para ejercitar la ruta de fallo real a
+#: traves del tool, sin salir a Internet.
+ENTORNO_INDICE_MUERTO_MCP = {
+    "PIP_INDEX_URL": "http://127.0.0.1:1/simple",
+    "PIP_RETRIES": "0",
+    "PIP_TIMEOUT": "2",
+    "PIP_NO_CACHE_DIR": "1",
+    "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+}
+
+
+def paso_dependencias_mcp(servidor) -> bool:
+    """Crea un proyecto con dependencias A TRAVES del tool, no llamando a Python.
+
+    Se crea en una carpeta temporal (el ``proyectos/`` real no se toca) y con pip
+    apuntado a un puerto cerrado, asi que se ejercita la ruta de fallo: lo que se
+    verifica es que la respuesta del tool lleva el estado, el comando exacto y
+    como reintentar, y que despues no queda nada en disco.
+
+    El registro de proyectos se aisla igual que la carpeta. ``ARQUITECTO_PERSISTIR=0``
+    solo protege el historial del arquitecto, no ``datos/proyectos.json``: sin
+    redirigir ``ARQUITECTO_REGISTRO`` este paso dejaba en el registro REAL la ficha
+    de un proyecto temporal que se borra unas lineas mas abajo.
+    """
+    _paso(6, "Dependencias a traves del tool crear_proyecto")
+    if servidor is None:
+        _fallo("se omite: el servidor no se pudo construir")
+        return False
+
+    import fabrica
+    import rutas
+
+    temporal = Path(tempfile.mkdtemp(prefix="verificacion-mcp-")).resolve()
+    nombre = "verificacion-mcp-deps"
+    registro_temporal = temporal / "proyectos.json"
+    try:
+        # Foto del registro real ANTES de tocar nada: si al final no coincide, la
+        # verificacion ha escrito donde no debia.
+        registro_real = fabrica.cargar_registro()
+        error_registro = ""
+    except Exception as exc:  # noqa: BLE001 - la verificacion informa del fallo
+        registro_real = None
+        error_registro = "{}: {}".format(type(exc).__name__, exc)
+
+    claves = list(ENTORNO_INDICE_MUERTO_MCP) + [
+        "ARQUITECTO_CARPETA_PROYECTOS",
+        "ARQUITECTO_REGISTRO",
+    ]
+    anteriores = {clave: os.environ.get(clave) for clave in claves}
+    os.environ.update(ENTORNO_INDICE_MUERTO_MCP)
+    os.environ["ARQUITECTO_CARPETA_PROYECTOS"] = str(temporal)
+    os.environ["ARQUITECTO_REGISTRO"] = str(registro_temporal)
+    try:
+        creado = rutas.ruta_de_proyecto(nombre)  # se calcula con el temporal ya activo
+        texto, error = _invocar(
+            servidor,
+            "crear_proyecto",
+            {
+                "nombre": nombre,
+                "descripcion": "proyecto temporal de la verificacion MCP",
+                "plantillas_seleccion": "python",
+                "con_git": False,
+                "publicar": False,
+                "instalar_dependencias": True,
+            },
+        )
+    finally:
+        for clave, valor in anteriores.items():
+            if valor is None:
+                os.environ.pop(clave, None)
+            else:
+                os.environ[clave] = valor
+
+    if error:
+        _fallo("crear_proyecto con instalar_dependencias=true", error)
+        shutil.rmtree(temporal, ignore_errors=True)
+        return False
+
+    print("\n".join("      " + linea for linea in (texto or "").splitlines()[:14]))
+    valido = True
+    for esperado, titulo in (
+        ("estado_dependencias=pendiente_error_red", "el tool informa del fallo real de pip"),
+        ("Comando exacto:", "el tool devuelve el comando exacto ejecutado"),
+        ("Reintenta con preparar_entorno", "el tool dice como reintentar la instalacion"),
+        (str(creado), "el tool informa de la ruta del proyecto"),
+    ):
+        if esperado in (texto or ""):
+            _ok(titulo)
+        else:
+            _fallo(titulo, "no aparece '{}' en la respuesta".format(esperado))
+            valido = False
+
+    if str(creado).startswith(str(temporal)):
+        _ok("el proyecto de prueba vive en la carpeta temporal", str(creado))
+    else:
+        _fallo("el proyecto de prueba se salio de la carpeta temporal", str(creado))
+        valido = False
+
+    if registro_temporal.is_file():
+        _ok(
+            "el tool registro el proyecto en el registro temporal",
+            str(registro_temporal),
+        )
+    else:
+        _fallo(
+            "el tool no registro el proyecto en el registro temporal",
+            "esperado: {}".format(registro_temporal),
+        )
+        valido = False
+
+    shutil.rmtree(temporal, ignore_errors=True)
+    if temporal.exists():
+        _fallo("no se pudo limpiar el proyecto temporal", str(temporal))
+        valido = False
+    else:
+        _ok("el proyecto temporal de la prueba se limpio")
+
+    if registro_real is None:
+        _fallo("no se pudo leer el registro real de proyectos", error_registro)
+        valido = False
+    else:
+        try:
+            despues = fabrica.cargar_registro()
+        except Exception as exc:  # noqa: BLE001 - la verificacion informa del fallo
+            despues = None
+            error_registro = "{}: {}".format(type(exc).__name__, exc)
+        if despues is None:
+            _fallo("no se pudo releer el registro real de proyectos", error_registro)
+            valido = False
+        elif despues == registro_real:
+            _ok("el registro real de proyectos no se toca", str(fabrica.ruta_registro()))
+        else:
+            _fallo(
+                "la verificacion escribio en el registro real de proyectos",
+                "revisa {}".format(fabrica.ruta_registro()),
+            )
+            valido = False
+    return valido
+
+
 def _estado_del_loop(texto: str) -> str:
     for linea in (texto or "").splitlines():
         if "estado del loop" in linea:
@@ -402,6 +578,7 @@ def main(argv=None) -> int:
     servidor = paso_servidor()
     paso_global()
     paso_invocacion(servidor)
+    paso_dependencias_mcp(servidor)
 
     print("")
     print("=" * 70)
