@@ -27,6 +27,7 @@ import argparse
 import os
 import shutil
 import socket
+import stat
 import sys
 import tempfile
 import threading
@@ -60,6 +61,31 @@ def _paso(numero: int, titulo: str) -> None:
     print("")
     print("-" * ANCHO)
     print("PASO {}: {}".format(numero, titulo))
+
+
+def _borrar_temporal(ruta: Path, intentos: int = 3) -> bool:
+    """Borra la carpeta temporal de verdad y dice si lo consiguio.
+
+    ``shutil.rmtree(ignore_errors=True)`` se calla en Windows cuando el arbol
+    trae objetos de git de solo lectura (``.git/objects``) o un fichero
+    bloqueado por un proceso recien terminado (el ``venv`` que acaba de crear
+    ``--venv``, el antivirus...): el borrado fallaba y el resumen seguia
+    diciendo que la carpeta estaba eliminada. Aqui se quita el solo-lectura, se
+    reintenta con una espera corta y se devuelve el resultado real, para poder
+    avisar en vez de mentir.
+    """
+    for espera in (0.0, 0.3, 0.9, 1.5)[:intentos]:
+        if espera:
+            time.sleep(espera)
+        for entrada in (ruta, *ruta.rglob("*")):
+            try:
+                os.chmod(entrada, stat.S_IWRITE)
+            except OSError:  # pragma: no cover - entrada ya borrada o sin permisos
+                pass
+        shutil.rmtree(ruta, ignore_errors=True)
+        if not ruta.exists():
+            return True
+    return False
 
 
 # --------------------------------------------------------------------------
@@ -726,7 +752,7 @@ def comprobar_dependencias_reales(
                 "site-packages del interprete de la verificacion: igual antes y despues",
             )
     finally:
-        shutil.rmtree(config_pip, ignore_errors=True)
+        _borrar_temporal(config_pip)
 
 
 def preparar_entorno(fabrica, nombre: str) -> str:
@@ -860,9 +886,11 @@ def main(argv=None) -> int:
 
     if opciones.conservar:
         print("Se conserva la carpeta temporal: {}".format(temporal))
-    else:
-        shutil.rmtree(temporal, ignore_errors=True)
+    elif _borrar_temporal(temporal):
         print("Carpeta temporal eliminada (el registro real no se toco).")
+    else:
+        print("AVISO: no se pudo borrar la carpeta temporal: {}".format(temporal))
+        print("       borrala a mano; el registro real no se toco igualmente.")
     return 1 if fallos else 0
 
 

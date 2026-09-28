@@ -38,8 +38,10 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -104,6 +106,30 @@ def _paso(numero: int, titulo: str) -> None:
     print("")
     print("-" * _anchos[0])
     print("PASO {}: {}".format(numero, titulo))
+
+
+def _borrar_temporal(ruta: Path, intentos: int = 3) -> bool:
+    """Borra la carpeta temporal de verdad y dice si lo consiguio.
+
+    ``shutil.rmtree(ignore_errors=True)`` se calla en Windows cuando el arbol
+    trae objetos de git de solo lectura (``.git/objects``) o un fichero
+    bloqueado por un proceso recien terminado (un ``venv`` que acaba de
+    crearse, el antivirus...): el borrado falla y el script seguia diciendo que
+    habia limpiado. Aqui se quita el solo-lectura, se reintenta con una espera
+    corta y se devuelve el resultado real.
+    """
+    for espera in (0.0, 0.3, 0.9, 1.5)[:intentos]:
+        if espera:
+            time.sleep(espera)
+        for entrada in (ruta, *ruta.rglob("*")):
+            try:
+                os.chmod(entrada, stat.S_IWRITE)
+            except OSError:  # pragma: no cover - entrada ya borrada o sin permisos
+                pass
+        shutil.rmtree(ruta, ignore_errors=True)
+        if not ruta.exists():
+            return True
+    return False
 
 
 # --------------------------------------------------------------------------
@@ -171,7 +197,7 @@ def entorno_aislado():
             else:
                 os.environ[clave] = valor
         if temporal is not None:
-            shutil.rmtree(temporal, ignore_errors=True)
+            _borrar_temporal(temporal)
 
 
 # --------------------------------------------------------------------------
@@ -555,7 +581,7 @@ def paso_dependencias_mcp(servidor) -> bool:
 
     if error:
         _fallo("crear_proyecto con instalar_dependencias=true", error)
-        shutil.rmtree(temporal, ignore_errors=True)
+        _borrar_temporal(temporal)
         return False
 
     print("\n".join("      " + linea for linea in (texto or "").splitlines()[:14]))
@@ -590,12 +616,11 @@ def paso_dependencias_mcp(servidor) -> bool:
         )
         valido = False
 
-    shutil.rmtree(temporal, ignore_errors=True)
-    if temporal.exists():
+    if _borrar_temporal(temporal):
+        _ok("el proyecto temporal de la prueba se limpio")
+    else:
         _fallo("no se pudo limpiar el proyecto temporal", str(temporal))
         valido = False
-    else:
-        _ok("el proyecto temporal de la prueba se limpio")
 
     if registro_real is None:
         _fallo("no se pudo leer el registro real de proyectos", error_registro)

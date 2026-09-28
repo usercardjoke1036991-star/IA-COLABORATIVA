@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import stat
 import tempfile
 from pathlib import Path
 
@@ -352,3 +353,40 @@ def test_main_avisa_si_no_puede_aislar_el_registro(sandbox, monkeypatch, capsys)
     assert codigo == 1
     assert "no se pudo aislar el registro" in texto
     assert os.environ.get("ARQUITECTO_REGISTRO") is None
+
+
+# --------------------------------------------------------------------------
+# La limpieza del temporal: ``_borrar_temporal``
+# --------------------------------------------------------------------------
+def _arbol_con_objeto_de_git(carpeta: Path) -> Path:
+    """Arbol de prueba con un objeto de git de solo lectura, como los reales."""
+    objetos = carpeta / ".git" / "objects" / "0d"
+    objetos.mkdir(parents=True)
+    fichero = objetos / "d9e58b4eee99b9416b19a6cf23b1de2f6cd450"
+    fichero.write_text("objeto", encoding="utf-8")
+    os.chmod(fichero, stat.S_IREAD)  # en Windows, atributo de solo lectura
+    return fichero
+
+
+def test_borrar_temporal_quita_arboles_con_solo_lectura(tmp_path):
+    """El caso que se le escapaba a ``rmtree(ignore_errors=True)`` en Windows.
+
+    Los objetos de git (``.git/objects``) van marcados de solo lectura y hacen
+    que el borrado falle en silencio: sin quitarlos, el cinturon dejaria su
+    temporal en disco y aun asi diria que lo limpio.
+    """
+    arbol = tmp_path / "verificacion-mcp-prueba"
+    _arbol_con_objeto_de_git(arbol)
+
+    assert verificador._borrar_temporal(arbol) is True
+    assert not arbol.exists()
+
+
+def test_borrar_temporal_avisa_si_no_pudo_borrar(tmp_path, monkeypatch):
+    """Si el arbol sigue en disco, el ayudante no puede decir que lo limpio."""
+    arbol = tmp_path / "verificacion-mcp-testarudo"
+    _arbol_con_objeto_de_git(arbol)
+    monkeypatch.setattr(verificador.shutil, "rmtree", lambda *argumentos, **clave: None)
+
+    assert verificador._borrar_temporal(arbol, intentos=1) is False
+    assert arbol.exists()
