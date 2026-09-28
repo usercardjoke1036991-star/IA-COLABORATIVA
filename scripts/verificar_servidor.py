@@ -55,6 +55,11 @@ HERRAMIENTAS_ESPERADAS = {
     "estado_git",
     "commit_proyecto",
     "publicar_en_github",
+    # Activacion automatica y bucle de mejora continua
+    "activar_proyecto",
+    "informe_de_trabajo",
+    "sugerir_mejoras",
+    "estado_de_sesion",
     # Programador externo
     "estado_programador",
     "pedir_codigo_al_programador",
