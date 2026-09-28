@@ -60,7 +60,7 @@ jobs:
       - name: pytest con cobertura
         run: python -m pytest -q --cov --cov-report=xml --cov-report=term-missing --junitxml=pytest-report.xml
 
-      - name: Verificadores del servidor MCP y de la fabrica
+      - name: Verificadores del servidor MCP, de la fabrica y del activador
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -69,15 +69,23 @@ jobs:
           # pwsh toma esa salida por un error terminante y aborta el paso; por eso lo
           # bajamos a 'Continue' y comprobamos el codigo de salida a mano.
           $ErrorActionPreference = 'Continue'
-          foreach ($script in 'scripts/verificar_servidor.py', 'scripts/verificar_fabrica.py') {
-            $texto = (python $script 2>&1 | Out-String)
+          $scripts = @(
+            @{ ruta = 'scripts/verificar_servidor.py'; args = @() },
+            @{ ruta = 'scripts/verificar_fabrica.py'; args = @() },
+            # El activador se prueba con registro aislado: el runner no ensucia
+            # ningun registro y, al estar en un temporal, mide la idempotencia real.
+            @{ ruta = 'scripts/verificar_activador.py'; args = @('--registro-aislado') }
+          )
+          foreach ($item in $scripts) {
+            $llamada = @($item.ruta) + @($item.args)
+            $texto = (python @llamada 2>&1 | Out-String)
             $codigo = $LASTEXITCODE
-            Write-Output "--- $script (codigo de salida: $codigo) ---"
+            Write-Output "--- $($item.ruta) (codigo de salida: $codigo) ---"
             Write-Output $texto
             if ($codigo -ne 0) {
               $pista = (($texto -split "`n") | Where-Object { $_ -match '\[FALLO\]|Traceback|Error|Exception' } | Select-Object -Last 5) -join ' // '
               if (-not $pista) { $pista = (($texto -split "`n") | Select-Object -Last 6) -join ' // ' }
-              Write-Output "::error title=$script::codigo de salida $codigo -> $pista"
+              Write-Output "::error title=$($item.ruta)::codigo de salida $codigo -> $pista"
               exit $codigo
             }
           }

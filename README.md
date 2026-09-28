@@ -253,6 +253,8 @@ herramientas.
 | `prueba_loop.py` | Simulador del loop completo desde consola (sin abrir Cursor). |
 | `scripts/verificar_servidor.py` | Diagnostico de la instalacion + invocacion de herramientas por MCP. |
 | `scripts/verificar_fabrica.py` | Verificacion end-to-end de la fabrica en una carpeta temporal (no toca tu registro real). Acepta los tres estados de `gh`: sin instalar, instalado sin sesion y con sesion; si hay sesion, crea de verdad el repositorio remoto del proyecto temporal. |
+| `scripts/verificar_activador.py` | Verificacion end-to-end del **activador**: activa de verdad una carpeta vacia y ajena a la fabrica (por defecto, una temporal nueva), comprueba la capa + los artefactos del bucle + el registro, y repite la activacion comparando hashes SHA-256 para demostrar que la segunda pasada no cambia ni un byte. `--registro-aislado` no toca `datos/proyectos.json`. |
+| `scripts/instalar_global.py` | Instala el arranque automatico en TODA la maquina: reglas globales de Cursor + servidor MCP en `~/.cursor/mcp.json` y en los settings de Cline (fusionando, nunca pisando). |
 | `scripts/prueba_cliente_mcp.py` | Cliente MCP por `stdio` que habla con el servidor como lo hace Cursor. |
 | `scripts/registrar_mcp.py` | Registra el servidor en Cursor y en Cline (fusionando JSON). |
 | `scripts/registrar_en_cline.ps1` | Registro especifico para Cline (CLI + settings). |
@@ -454,7 +456,8 @@ despues guarda la credencial (no vuelve a pedirla).
 Ademas hay integracion continua en `.github/workflows/ci.yml`:
 
 - **pruebas**: `pytest` con cobertura en Linux y Windows (matriz de runners) y, en
-  Windows, los dos verificadores (`verificar_servidor.py` y `verificar_fabrica.py`).
+  Windows, los tres verificadores (`verificar_servidor.py`, `verificar_fabrica.py`
+  y `verificar_activador.py --registro-aislado`).
 - **calidad**: analisis con `SonarSource/sonarqube-scan-action`, que solo se
   ejecuta si existe el secreto `SONAR_TOKEN`; sin el, el CI sigue en verde.
 
@@ -729,8 +732,14 @@ venv\Scripts\python.exe arquitecto_mcp.py --reiniciar
 venv\Scripts\python.exe prueba_loop.py --mock
 venv\Scripts\python.exe prueba_loop.py --mock --bloqueo --exportar
 
-# Verificacion de la instalacion (12 comprobaciones)
+# Verificacion de la instalacion (16 comprobaciones, incluido el arranque global del IDE)
 venv\Scripts\python.exe scripts\verificar_servidor.py
+
+# Verificacion end-to-end del ACTIVADOR: activa una carpeta ajena DOS veces,
+# comprueba la capa, los artefactos y el registro, y compara los hashes
+# (con --registro-aislado no ensucia datos/proyectos.json)
+venv\Scripts\python.exe scripts\verificar_activador.py
+venv\Scripts\python.exe scripts\verificar_activador.py --registro-aislado
 
 # Cliente MCP por stdio: la misma conversacion que hara Cursor
 venv\Scripts\python.exe scripts\prueba_cliente_mcp.py
@@ -779,6 +788,9 @@ funcionan antes de conectar el modelo real.
 | Un check `SonarCloud Code Analysis` falla | Ese check no es el CI: es el analisis automatico de SonarQube Cloud. Entra en sonarcloud.io, mira los issues y el quality gate del proyecto; el detalle del enlace esta en el propio check. |
 | Una herramienta MCP que ejecuta `git` (`estado_git`, `estado_fabrica`, `preparar_entorno`...) se queda colgada y el IDE da timeout | El hijo heredaba el `stdin` del protocolo MCP y no arrancaba nunca (quedaban procesos `git` vivos minutos despues). Se arregla en `procesos.py`: todo proceso pasa por `procesos.ejecutar` con `stdin=DEVNULL` y `CREATE_NO_WINDOW`. Si añades una llamada nueva, no uses `subprocess.run` directo. |
 | `test_regresion_ningun_modulo_lanza_subprocess_directo` falla | Alguien ha vuelto a llamar a `subprocess.run`/`subprocess.Popen` en un modulo de produccion. Usa `procesos.ejecutar` (o `ejecutar_texto`) o el cuelgue del punto anterior reaparece. |
+| Abro una carpeta nueva y el agente no llama a `activar_proyecto` | Falta el arranque global (se instala una sola vez): `venv\Scripts\python.exe scripts\instalar_global.py` y despues *Developer: Reload Window*. El **paso 4** de `scripts\verificar_servidor.py` dice exactamente que falta (reglas en `~/.cursor/rules`, servidor en `~/.cursor/mcp.json` o en los `cline_mcp_settings.json`). |
+| Quiero comprobar que el activador es idempotente de verdad | `venv\Scripts\python.exe scripts\verificar_activador.py`: activa una carpeta ajena dos veces y compara el SHA-256 de cada archivo. La segunda pasada tiene que dejar los mismos hashes y el kit tiene que decir "no habia nada que escribir". |
+| La IA pego una clave en el informe y no se si salio de la maquina | No sale: `mejora.sugerir_mejoras` sanea antes de llamar al proveedor el contexto del repo, el informe y la memoria de la sesion (patrones `sk-`/`ghp_`/JWT/PEM + los valores sensibles del `.env` del proyecto). Cubierto por `tests/test_sanea.py`. |
 | Un paso del CI muere en segundos con `Process completed with exit code 1` | `pwsh` en Actions usa `$ErrorActionPreference = 'Stop'`: si un script del repositorio escribe en **stderr** (los verificadores y los logs lo hacen a proposito), lo toma por error terminante y aborta el paso. Pon `$ErrorActionPreference = 'Continue'` al principio del `run:` y comprueba tu mismo `$LASTEXITCODE`. |
 
 Los logs del servidor van **siempre a stderr** (con `ARQUITECTO_LOG=DEBUG` para
@@ -793,7 +805,12 @@ en *Output → MCP Logs*.
   ni en el repositorio. `config.py` solo la lee del entorno.
 - Las claves nunca se registran en logs: se muestran enmascaradas (`sk-a...1234`).
 - Envia al Arquitecto solo el contexto necesario: no pegues credenciales,
-  cadenas de conexion ni datos personales en `contexto_del_codigo`.
+  cadenas de conexion ni datos personales en `contexto_del_codigo`. Aun asi, el
+  sistema ya no depende de que te acuerdes: antes de cada llamada se sanean las
+  tres cosas que viajan (contexto del repositorio, informe de la ronda y memoria
+  de la sesion) con `contexto.sanea` y los valores sensibles del `.env` del
+  proyecto. Ni una clave, un token ni un bloque PEM salen de la maquina aunque
+  aparezcan pegados en el informe (`tests/test_sanea.py`).
 - El historial persistente (`datos/historial_arquitecto.json`) guarda la
   conversacion en disco local. Bórralo o pon `ARQUITECTO_PERSISTIR=false` si no
   lo quieres.

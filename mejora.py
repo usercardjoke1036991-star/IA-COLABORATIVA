@@ -280,11 +280,18 @@ def sugerir_mejoras(
     memoria = sesiones.resumen_para_arquitecto(limpio)
     extra = "ENFOQUE pedido por el usuario: {}".format(enfoque.strip()) if enfoque.strip() else ""
     resumen = contexto.contexto_del_repo(carpeta, stack, extra=extra)
+    # Defensa en profundidad: el contexto ya se sanea dentro de ``contexto``, pero
+    # el informe y la memoria los escribe la IA del IDE y una clave puede colarse
+    # en los hechos o en la evidencia pegada. Se sanean las tres cosas aqui,
+    # justo antes de que salgan de esta maquina.
+    secretos = contexto.secretos_del_proyecto(carpeta)
+    informe = contexto.sanea(_informe_para_arquitecto(turno), secretos)
+    memoria = contexto.sanea(memoria, secretos)
 
     motor = arquitecto or Arquitecto()
     respuesta = motor.revisar_mejoras(
         proyecto=limpio,
-        informe=_informe_para_arquitecto(turno),
+        informe=informe,
         contexto=resumen,
         memoria=memoria,
     )

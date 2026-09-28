@@ -170,14 +170,14 @@ def instalar_global(
     lineas.append("[Cursor]  {}".format(registrador._fusionar(mcp_global, nombre, entrada)))
 
     reglas = carpeta / "rules" / NOMBRE_REGLAS_GLOBALES
+    contenido_reglas = REGLAS_GLOBALES.replace("__SERVIDOR__", nombre)
     try:
-        reglas.parent.mkdir(parents=True, exist_ok=True)
-        reglas.write_text(
-            REGLAS_GLOBALES.replace("__SERVIDOR__", nombre),
-            encoding="utf-8",
-            newline="\n",
-        )
-        lineas.append("[Reglas]  escritas en {}".format(reglas))
+        if reglas.is_file() and reglas.read_text(encoding="utf-8") == contenido_reglas:
+            lineas.append("[Reglas]  ya estaban al dia en {}".format(reglas))
+        else:
+            reglas.parent.mkdir(parents=True, exist_ok=True)
+            reglas.write_text(contenido_reglas, encoding="utf-8", newline="\n")
+            lineas.append("[Reglas]  escritas en {}".format(reglas))
     except OSError as exc:
         lineas.append("[Reglas]  aviso: no se pudo escribir {} ({})".format(reglas, exc))
 

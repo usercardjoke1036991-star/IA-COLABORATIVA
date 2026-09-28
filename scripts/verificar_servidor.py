@@ -4,8 +4,10 @@ Comprueba, de verdad y paso a paso, que todo el sistema funciona:
 
 1. Dependencias instaladas (mcp + requests) y sus versiones.
 2. Modulos del proyecto importables y configuracion cargada.
-3. El servidor MCP se construye y registra sus 5 herramientas.
-4. Se invoca una herramienta A TRAVES del gestor de MCP (no llamando a la
+3. El servidor MCP se construye y registra sus 31 herramientas.
+4. El arranque GLOBAL esta instalado en el IDE: reglas de Cursor y servidor en
+   ``~/.cursor/mcp.json`` y en los ``cline_mcp_settings.json`` que existan.
+5. Se invoca una herramienta A TRAVES del gestor de MCP (no llamando a la
    funcion de Python directamente), para validar el camino real que usa Cursor.
 
 Por defecto se ejecuta en modo simulado (sin red ni API key). Con --real usa el
@@ -20,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import sys
 from pathlib import Path
@@ -222,10 +225,75 @@ def _invocar(servidor, nombre: str, argumentos: dict):
 
 
 # --------------------------------------------------------------------------
-# Paso 4: invocacion real a traves del protocolo MCP
+# Paso 4: arranque global en el IDE (Cursor y Cline)
+# --------------------------------------------------------------------------
+def paso_global() -> bool:
+    """Comprueba que el arranque automatico esta instalado en ESTA maquina.
+
+    Sin este paso, abrir una carpeta virgen no enchufa nada: el agente del IDE no
+    veria ``activar_proyecto`` y las reglas globales no se leerian solas. Se mira
+    el disco (reglas + `mcp.json` de Cursor + settings de Cline), no la memoria
+    del proceso.
+    """
+    _paso(4, "Arranque global instalado en el IDE (Cursor y Cline)")
+    try:
+        import activacion
+    except Exception as exc:  # noqa: BLE001 - verificacion: se informa del fallo
+        _fallo("import de activacion", str(exc))
+        return False
+
+    valido = True
+
+    # 1) Reglas globales de Cursor: son el disparador del arranque.
+    reglas = activacion.raiz_cursor() / "rules" / activacion.NOMBRE_REGLAS_GLOBALES
+    if not reglas.is_file():
+        _fallo("faltan las reglas globales de Cursor", str(reglas))
+        valido = False
+    else:
+        texto = reglas.read_text(encoding="utf-8", errors="replace")
+        if "alwaysApply: true" in texto and "activar_proyecto" in texto:
+            _ok("reglas globales de Cursor", "alwaysApply + activar_proyecto")
+        else:
+            _fallo("reglas globales incompletas (revisa el frontmatter)", str(reglas))
+            valido = False
+
+    # 2) Servidor MCP en la configuracion personal de cada agente.
+    registrador = activacion._registrador()
+    casa = activacion.raiz_cursor()
+    destinos = [casa / "mcp.json"] + registrador._destinos_cline()
+    presentes = [ruta for ruta in destinos if ruta.exists()]
+    if not presentes and not casa.exists():
+        _ok("no se detecto Cursor ni Cline en esta maquina (nada que comprobar)")
+        return valido
+    if not presentes:
+        _fallo("Cursor esta instalado pero no hay mcp.json global", str(casa / "mcp.json"))
+        valido = False
+        return valido
+
+    for ruta in presentes:
+        try:
+            datos = json.loads(ruta.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            _fallo("config MCP ilegible", "{}: {}".format(ruta, exc))
+            valido = False
+            continue
+        servidores = datos.get("mcpServers") if isinstance(datos, dict) else None
+        if isinstance(servidores, dict) and activacion.NOMBRE_MCP in servidores:
+            _ok("servidor '{}' en {}".format(activacion.NOMBRE_MCP, ruta.parent.name), str(ruta))
+        else:
+            _fallo("el servidor no esta en {}".format(ruta), str(ruta))
+            valido = False
+
+    if not valido:
+        print("  arreglo: venv\\Scripts\\python.exe scripts\\instalar_global.py")
+    return valido
+
+
+# --------------------------------------------------------------------------
+# Paso 5: invocacion real a traves del protocolo MCP
 # --------------------------------------------------------------------------
 def paso_invocacion(servidor) -> bool:
-    _paso(4, "Invocacion de las herramientas a traves del gestor MCP")
+    _paso(5, "Invocacion de las herramientas a traves del gestor MCP")
     if servidor is None:
         _fallo("se omite: el servidor no se pudo construir")
         return False
@@ -332,6 +400,7 @@ def main(argv=None) -> int:
     paso_dependencias()
     paso_modulos()
     servidor = paso_servidor()
+    paso_global()
     paso_invocacion(servidor)
 
     print("")

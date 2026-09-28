@@ -51,6 +51,29 @@ def test_instalar_global_es_idempotente(tmp_path, monkeypatch):
     assert list(datos["mcpServers"]) == [activacion.NOMBRE_MCP]
 
 
+def test_la_segunda_instalacion_no_cambia_ni_un_byte(tmp_path, monkeypatch):
+    """Idempotencia medida: la segunda pasada deja los mismos hashes."""
+    import hashlib
+
+    hogar = _hogar(tmp_path, monkeypatch)
+    activacion.instalar_global(con_cline=False)
+    antes = {
+        ruta.relative_to(hogar).as_posix(): hashlib.sha256(ruta.read_bytes()).hexdigest()
+        for ruta in sorted(hogar.rglob("*"))
+        if ruta.is_file()
+    }
+
+    informe = activacion.instalar_global(con_cline=False)
+
+    despues = {
+        ruta.relative_to(hogar).as_posix(): hashlib.sha256(ruta.read_bytes()).hexdigest()
+        for ruta in sorted(hogar.rglob("*"))
+        if ruta.is_file()
+    }
+    assert despues == antes
+    assert "ya estaban al dia" in informe
+
+
 def test_los_destinos_de_cursor_incluyen_el_global(tmp_path, monkeypatch):
     _hogar(tmp_path, monkeypatch)
 
