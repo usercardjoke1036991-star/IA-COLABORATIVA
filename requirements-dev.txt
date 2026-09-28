@@ -8,3 +8,7 @@ pytest>=8.0
 
 # Cobertura en formato XML, que es el que consume SonarQube.
 pytest-cov>=5.0
+
+# Para validar la sintaxis del workflow del CI antes de subirlo: un YAML mal formado
+# hace que GitHub ni arranque el CI ("Invalid workflow file"). Ver README.
+pyyaml>=6.0

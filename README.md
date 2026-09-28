@@ -352,6 +352,25 @@ Ademas hay integracion continua en `.github/workflows/ci.yml`:
 - **calidad**: analisis con `SonarSource/sonarqube-scan-action`, que solo se
   ejecuta si existe el secreto `SONAR_TOKEN`; sin el, el CI sigue en verde.
 
+Y SonarQube Cloud analiza el repositorio por su cuenta: al instalar la app de
+SonarSource queda activado el **analisis automatico**, que publica el resultado de
+cada push como check `SonarCloud Code Analysis` (con su quality gate), sin tocar
+secretos ni el CI. Mientras ese analisis automatico siga activo **no** definas
+`SONAR_TOKEN`: el analisis manual del CI fallaria con *"You are running manual
+analysis while Automatic Analysis is enabled"*. Para pasar a `sonar-scanner` en el
+CI, desactivalo antes en `sonarcloud.io` (*Administration → Analysis Method*).
+
+> El workflow es YAML y GitHub no lo valida en tu maquina: si tiene un error de
+> sintaxis, el CI falla al instante y sin ejecutar ningun job (*"Invalid workflow
+> file: .github/workflows/ci.yml#LN"*). Compruebalo antes de subir:
+>
+> ```powershell
+> venv\Scripts\python.exe -c "import yaml;yaml.safe_load(open('.github/workflows/ci.yml',encoding='utf-8'));print('workflow OK')"
+> ```
+>
+> Necesita `pyyaml`, ya incluido en `requirements-dev.txt`. Un simple `: ` (dos
+> puntos seguidos de espacio) dentro de un `run:` sin comillas ya lo rompe.
+
 ### Analisis con SonarQube
 
 **Opcion A - local en Docker** (no hace falta instalar nada mas):
@@ -610,6 +629,8 @@ funcionan antes de conectar el modelo real.
 | El orquestador se para en la primera ronda | Revisa `datos/orquestador_<proyecto>.txt` y la ultima salida: o falta la API key (`arquitecto_mcp.py --check`) o el modelo no devolvio el formato `### ARCHIVO:`. |
 | El orquestador no encuentra `cline` | Instala Cline CLI o usa `--modo interno` (`ARQUITECTO_ORQUESTADOR=interno`). |
 | Quiero verificar que la fabrica funciona antes de usarla | `venv\Scripts\python.exe scripts\verificar_fabrica.py` (crea todo en una carpeta temporal y no toca tu registro real). |
+| El CI de GitHub falla al instante, sin jobs y sin duracion | El workflow es YAML invalido (GitHub no lo valida en tu maquina). Mira *Annotations* en la ejecucion: dice la linea (`Invalid workflow file: .github/workflows/ci.yml#LNN`). Valida antes de subir con `venv\Scripts\python.exe -c "import yaml;yaml.safe_load(open('.github/workflows/ci.yml',encoding='utf-8'))"`. Un `: ` (dos puntos y espacio) sin comillas en un `run:` ya lo rompe. |
+| El check `SonarCloud Code Analysis` falla | Ese check no es el CI: es el analisis automatico de SonarQube Cloud. Entra en sonarcloud.io, mira los issues y el quality gate del proyecto; el detalle del enlace esta en el propio check. |
 
 Los logs del servidor van **siempre a stderr** (con `ARQUITECTO_LOG=DEBUG` para
 mas detalle), porque `stdout` esta reservado al protocolo MCP. En Cursor los ves

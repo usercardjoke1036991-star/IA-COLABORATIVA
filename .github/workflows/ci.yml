@@ -7,6 +7,13 @@ name: CI
 # Secretos necesarios para el paso de calidad (Settings -> Secrets -> Actions):
 #   SONAR_TOKEN     token de analisis de https://sonarcloud.io
 #   SONAR_HOST_URL  (opcional) URL de un SonarQube Server propio; si falta, se usa SonarCloud.
+#
+# OJO: este repositorio ya tiene activado el analisis automatico de SonarQube Cloud
+# (la app de SonarSource analiza cada push y publica el quality gate como check).
+# Mientras siga activo, NO definas SONAR_TOKEN: el analisis manual del CI falla con
+# "You are running manual analysis while Automatic Analysis is enabled".
+# Para usar sonar-scanner en el CI, desactiva antes el analisis automatico en
+# sonarcloud.io (Administration -> Analysis Method) y luego anade el secreto.
 
 on:
   push:
@@ -100,4 +107,6 @@ jobs:
 
       - name: Recordatorio si falta el token
         if: env.SONAR_TOKEN == ''
-        run: echo "Sin SONAR_TOKEN: define el secreto para activar el analisis de SonarQube."
+        run: |
+          echo "Sin SONAR_TOKEN: se omite el analisis con sonar-scanner."
+          echo "Anade el secreto en Settings -> Secrets and variables -> Actions."
