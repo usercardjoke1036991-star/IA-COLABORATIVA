@@ -120,6 +120,33 @@ def test_fusionar_no_escribe_nada_si_el_destino_no_es_valido(hogar):
     assert not colado.exists()
 
 
+def test_fusionar_rechaza_el_traversal_con_puntos(hogar):
+    """``..`` se resuelve antes de comparar: el destino se sale y no se escribe."""
+    colado = hogar / "colado.json"
+
+    mensaje = registrar._fusionar(hogar / ".cline" / ".." / "colado.json", "arquitecto-externo", {})
+
+    assert mensaje.startswith("aviso:")
+    assert not colado.exists()
+
+
+def test_fusionar_encuentra_el_json_aunque_la_ruta_traiga_puntos(hogar):
+    """Con el destino dentro de la carpeta permitida, los ``..`` no son un problema."""
+    destino = hogar / ".cline" / "data" / "cline_mcp_settings.json"
+    entrada = registrar._entrada("python.exe", "arquitecto-externo")
+
+    mensaje = registrar._fusionar(
+        hogar / ".cline" / "data" / ".." / "data" / "cline_mcp_settings.json",
+        "arquitecto-externo",
+        entrada,
+    )
+
+    assert mensaje.startswith("actualizado")
+    assert json.loads(destino.read_text(encoding="utf-8"))["mcpServers"][
+        "arquitecto-externo"
+    ] == entrada
+
+
 def test_fusionar_no_escribe_nada_si_el_nombre_no_es_valido(hogar):
     destino = hogar / ".cline" / "mcp.json"
 

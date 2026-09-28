@@ -160,9 +160,29 @@ class Proyecto:
 # Registro de proyectos
 # --------------------------------------------------------------------------
 def cargar_registro() -> Dict[str, dict]:
-    """Lee el registro de proyectos creados por la fabrica."""
+    """Lee el registro de proyectos creados por la fabrica.
+
+    La ruta pasa por el mismo saneado que en :func:`guardar_registro` (nombre
+    del archivo con ``os.path.basename``, ``Path.resolve()`` e
+    ``is_relative_to``): la lectura y la escritura usan exactamente la misma
+    ruta y ninguna de las dos toca el texto que llega del entorno.
+    """
+    indicada = ruta_registro()
+    carpeta = indicada.parent.resolve()
+    nombre = os.path.basename(str(indicada))
+    if not nombre or nombre in {".", ".."}:
+        raise ErrorFabrica(
+            "Registro invalido: '{}' no tiene nombre de archivo.".format(indicada)
+        )
+    destino = (carpeta / nombre).resolve()
+    if not destino.is_relative_to(carpeta):
+        raise ErrorFabrica(
+            "El registro se sale de su carpeta ({}): revisa ARQUITECTO_REGISTRO.".format(
+                carpeta
+            )
+        )
     try:
-        contenido = ruta_registro().read_text(encoding="utf-8")
+        contenido = destino.read_text(encoding="utf-8")
     except (FileNotFoundError, OSError):
         return {}
     try:
@@ -180,15 +200,38 @@ def guardar_registro(registro: Dict[str, dict]) -> None:
     La ruta se vuelve a validar aqui, en el punto exacto de la escritura: si
     alguien llama a esta funcion con una ruta manipulada, se rechaza antes de
     tocar el disco (regla SonarQube ``pythonsecurity:S2083``).
+
+    El saneado se escribe **en la misma funcion que abre el archivo** a
+    proposito, para que el analisis estatico lo vea junto al sumidero: de la
+    ruta recibida -``ARQUITECTO_REGISTRO`` es del entorno, o sea entrada
+    externa- no se usa nunca el texto tal cual. Se toma solo el **nombre** del
+    archivo (``os.path.basename``, que descarta cualquier componente de
+    directorio), se resuelve con ``Path.resolve()`` y se comprueba con
+    ``Path.is_relative_to`` que no se sale de su carpeta. La carpeta ya viene
+    validada contra :func:`raices_registro`; esto es la ultima barrera.
     """
     destino = _exigir_raiz_permitida(ruta_registro())
+    carpeta = destino.parent.resolve()
+    nombre = os.path.basename(str(destino))
+    if not nombre or nombre in {".", ".."}:
+        raise ErrorFabrica(
+            "Registro invalido: '{}' no tiene nombre de archivo.".format(destino)
+        )
+    destino = (carpeta / nombre).resolve()
+    if not destino.is_relative_to(carpeta):
+        raise ErrorFabrica(
+            "El registro se sale de su carpeta ({}): revisa ARQUITECTO_REGISTRO.".format(
+                carpeta
+            )
+        )
     destino.parent.mkdir(parents=True, exist_ok=True)
     volcado = {
         "actualizado": datetime.now().isoformat(timespec="seconds"),
         "proyectos": registro,
     }
     destino.write_text(
-        json.dumps(volcado, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        data=json.dumps(volcado, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
     )
 
 

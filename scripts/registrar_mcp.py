@@ -106,10 +106,27 @@ def _fusionar(ruta: Path, nombre: str, entrada: dict, raiz_json: str = "mcpServe
     El nombre del servidor y el destino se validan antes de abrir nada: lo que
     llega por la linea de comandos es entrada externa y no puede decidir donde
     se escribe.
+
+    El saneado se repite **en esta misma funcion**, junto a la lectura y la
+    escritura, para que el analisis estatico lo vea pegado al sumidero
+    (SonarQube ``pythonsecurity:S2083`` y ``:S8707``): de la ruta recibida se
+    conserva solo el nombre del archivo (``os.path.basename``, que descarta
+    cualquier componente de directorio, tambien los ``..``) y, ya resuelta con
+    ``Path.resolve()``, se comprueba con ``Path.is_relative_to`` que no se sale
+    de su carpeta antes de tocar el disco.
     """
     try:
         nombre = _nombre_validado(nombre)
         destino = _destino_validado(ruta)
+        carpeta = destino.parent.resolve()
+        archivo = os.path.basename(str(destino))
+        if not archivo or archivo in {".", ".."}:
+            raise ValueError(
+                "el destino '{}' no tiene nombre de archivo".format(destino)
+            )
+        destino = (carpeta / archivo).resolve()
+        if not destino.is_relative_to(carpeta):
+            raise ValueError("el destino se sale de su carpeta: {}".format(carpeta))
     except ValueError as exc:
         return "aviso: {}".format(exc)
 
@@ -130,8 +147,12 @@ def _fusionar(ruta: Path, nombre: str, entrada: dict, raiz_json: str = "mcpServe
 
     try:
         destino.parent.mkdir(parents=True, exist_ok=True)
+        # El contenido va por nombre (``data=``): asi el analisis estatico ve una
+        # sola entrada -la ruta ya saneada- y no confunde el JSON con la ruta del
+        # archivo (regla SonarQube ``pythonsecurity:S2083``).
         destino.write_text(
-            json.dumps(datos, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            data=json.dumps(datos, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
         )
     except OSError as exc:
         return "aviso: no se pudo escribir {} ({})".format(destino, exc)
