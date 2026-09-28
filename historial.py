@@ -95,6 +95,20 @@ class Historial:
     def registrar_directriz(self, contenido: str) -> None:
         self._agregar(ROL_ARQUITECTO, "directriz", contenido.strip())
 
+    def registrar_mejora(
+        self,
+        proyecto: str,
+        informe: str,
+        contexto: str = "",
+        memoria: str = "",
+    ) -> None:
+        """Registra una ronda del bucle de mejora continua (informe + memoria)."""
+        self._agregar(
+            ROL_USUARIO,
+            "mejora",
+            protocolo.bloque_mejora(proyecto, informe, contexto, memoria),
+        )
+
     # -- Escritura generica (rol PROGRAMADOR) ------------------------------
     def registrar_usuario(self, contenido: str, tipo: str = "tarea") -> None:
         """Guarda un mensaje ya formateado dirigido al modelo (sin reenvolverlo).

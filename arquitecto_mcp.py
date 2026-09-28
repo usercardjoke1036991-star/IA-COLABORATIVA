@@ -13,10 +13,16 @@ ARQUITECTO (planifica)
   exportar_plan           Vuelca el plan a PLAN_ARQUITECTO.md del proyecto.
   reiniciar_sesion        Olvida la memoria y empieza una sesion limpia.
 
+BUCLE DE MEJORA CONTINUA (IDE informa -> API sugiere -> IDE implementa)
+  informe_de_trabajo      Cierra la ronda: hechos + evidencia real + tus sugerencias.
+  sugerir_mejoras         El arquitecto lee el informe y devuelve mejoras priorizadas.
+  estado_de_sesion        Estado del bucle por proyecto (no gasta tokens).
+
 FABRICA DE PROYECTOS
   estado_fabrica          Diagnostico: rutas, plantillas, git, gh y los dos modelos.
   catalogo_plantillas     Plantillas disponibles y sus notas de instalacion.
   crear_proyecto          Crea carpeta aislada + plantillas + git + registro.
+  activar_proyecto        Enchufa la carpeta abierta: registro + capa + kit (idempotente).
   listar_proyectos        Proyectos creados por la fabrica.
   ver_proyecto            Ficha, arbol de archivos y estado de git.
 
@@ -65,8 +71,10 @@ import sys
 import threading
 
 import config as configuracion
+import activacion
 import fabrica
 import herramientas_archivos as archivos
+import mejora
 import plantillas
 import protocolo
 import rutas
@@ -312,6 +320,126 @@ def construir_servidor():
             return protocolo.formatear_error(str(exc))
         except Exception as exc:
             return protocolo.formatear_error("Error inesperado en crear_proyecto: {}".format(exc))
+
+    @servidor.tool()
+    def activar_proyecto(
+        ruta: str = "",
+        nombre: str = "",
+        descripcion: str = "",
+        forzar: bool = False,
+    ) -> str:
+        """Activa la carpeta abierta: la enchufa al sistema completo (una sola vez).
+
+        Llamala al empezar a trabajar en una carpeta que NO tiene la capa de
+        orquestacion (no existe `.clinerules` ni `.cursor/rules/arquitecto.mdc`).
+        Registra el proyecto en la fabrica con su ruta real, inyecta la capa que
+        falte (reglas, registro MCP del proyecto, tareas del IDE), deja los
+        artefactos del bucle (`INFORME.md` y `SUGERENCIAS.md`) y devuelve el kit
+        de arranque: stack detectado, comando real de prueba y contexto del
+        repositorio listo para `consultar_arquitecto`.
+
+        Es idempotente: repetirla solo completa lo que falte.
+
+        Args:
+            ruta: carpeta a activar; vacio = el directorio de trabajo del IDE.
+            nombre: nombre con el que se registra (vacio = el de la carpeta).
+            descripcion: objetivo del proyecto en una frase, si se conoce.
+            forzar: reescribe la capa de orquestacion aunque ya exista.
+
+        Returns:
+            Kit de arranque con el protocolo a seguir (y los errores de sandbox
+            explicados si la carpeta se sale de las raices permitidas).
+        """
+        try:
+            return activacion.activar(
+                ruta=ruta or None,
+                nombre=nombre,
+                descripcion=descripcion,
+                forzar=forzar,
+            )
+        except (rutas.ErrorRuta, ValueError) as exc:
+            return "AVISO: {}".format(exc)
+        except Exception as exc:
+            log.exception("Fallo activar_proyecto")
+            return protocolo.formatear_error(
+                "Error inesperado en activar_proyecto: {}".format(exc)
+            )
+
+    @servidor.tool()
+    def informe_de_trabajo(
+        proyecto: str,
+        hechos: str,
+        evidencia: str,
+        sugerencias_propias: str = "",
+        archivos_tocados: str = "",
+    ) -> str:
+        """Cierra una ronda: hechos + evidencia REAL de las pruebas + tus sugerencias.
+
+        Llamala al terminar cada bloque de trabajo, antes de pedir mas mejoras.
+        El informe queda en `INFORME.md` del proyecto y en la memoria de la
+        sesion, que es lo que el arquitecto recibe en la ronda siguiente.
+
+        Args:
+            proyecto: proyecto registrado (el que devolvio activar_proyecto).
+            hechos: que se implemento, en 3-8 lineas y sin adornos.
+            evidencia: comando exacto y su salida REAL (pega la traza, no la resumas).
+            sugerencias_propias: tus ideas de mejora, priorizadas (opcional pero valioso).
+            archivos_tocados: rutas relativas creadas o modificadas.
+
+        Returns:
+            La ronda registrada y la siguiente llamada exacta a hacer.
+        """
+        try:
+            return mejora.informe_de_trabajo(
+                proyecto, hechos, evidencia, sugerencias_propias, archivos_tocados
+            )
+        except (ValueError, rutas.ErrorRuta) as exc:
+            return "AVISO: {}".format(exc)
+        except Exception as exc:
+            log.exception("Fallo informe_de_trabajo")
+            return protocolo.formatear_error(
+                "Error en informe_de_trabajo: {}".format(exc)
+            )
+
+    @servidor.tool()
+    def sugerir_mejoras(proyecto: str, enfoque: str = "") -> str:
+        """La IA de la API lee tu informe y devuelve el siguiente lote de mejoras.
+
+        Cierra el ciclo bidireccional: manda al ARQUITECTO tu ultimo informe, el
+        contexto REAL del repositorio (estructura, stack, git y cabeceras, ya
+        saneado de secretos) y la memoria de la sesion. Su respuesta se guarda
+        en `SUGERENCIAS.md` y vuelve aqui priorizada.
+
+        Args:
+            proyecto: proyecto registrado.
+            enfoque: opcional; a que area quieres que dedique la revision.
+
+        Returns:
+            Sugerencias priorizadas y el estado del bucle (EN CURSO o TAREA
+            TERMINADA) con la siguiente accion. Si no queda nada de valor, el
+            arquitecto cierra el bucle y aqui se dice que pares.
+        """
+        try:
+            return mejora.sugerir_mejoras(proyecto, enfoque)
+        except (ValueError, rutas.ErrorRuta) as exc:
+            return "AVISO: {}".format(exc)
+        except Exception as exc:
+            log.exception("Fallo sugerir_mejoras")
+            return protocolo.formatear_error("Error en sugerir_mejoras: {}".format(exc))
+
+    @servidor.tool()
+    def estado_de_sesion(proyecto: str) -> str:
+        """Estado del bucle de mejora continua de un proyecto (no gasta tokens).
+
+        Args:
+            proyecto: proyecto registrado.
+        """
+        try:
+            return mejora.estado_de_sesion(proyecto)
+        except (ValueError, rutas.ErrorRuta) as exc:
+            return "AVISO: {}".format(exc)
+        except Exception as exc:
+            return protocolo.formatear_error("Error en estado_de_sesion: {}".format(exc))
 
     @servidor.tool()
     def listar_proyectos() -> str:

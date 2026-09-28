@@ -62,6 +62,71 @@ puertos abiertos, y el loop termina solo (nada de bucles infinitos de cortesia).
 
 ---
 
+## Arranque sin friccion: crea la carpeta, abrela y escribe tu prompt
+
+```powershell
+# una sola vez en la maquina: deja el servidor MCP en la config GLOBAL del IDE
+venv\Scripts\python.exe scripts\instalar_global.py
+```
+
+A partir de ahi, cualquier carpeta que abras queda enchufada sola:
+
+1. Crea la carpeta (`proyectos/mi-idea`) y abrela en el IDE.
+2. Escribe tu prompt. La IA del IDE llama entonces a `activar_proyecto`, que:
+   - registra el proyecto en la fabrica con su ruta real;
+   - inyecta la capa de orquestacion que falte (`.clinerules`, `.cursorrules`,
+     `.cursor/rules/arquitecto.mdc`, `.cursor/mcp.json`, `AGENTS.md`, `.env.example`);
+   - detecta el stack y el comando real de pruebas;
+   - deja `INFORME.md`, `SUGERENCIAS.md` y una tarea de IDE que re-activa la
+     carpeta al abrirla (`.vscode/tasks.json`);
+   - devuelve el kit de arranque con el contexto ya listo para el arquitecto.
+3. La IA llama a `consultar_arquitecto` con tu prompt literal y ese contexto, y
+   empieza a implementar.
+
+`activar_proyecto` es idempotente: repetirla solo completa lo que falte.
+
+Sin IDE (o si el MCP no estuviera disponible), lo mismo desde la consola:
+
+```powershell
+venv\Scripts\python.exe scripts\activar.py --ruta "C:\ruta\a\mi-idea"
+```
+
+---
+
+## Bucle de mejora continua (IDE informa -> API sugiere -> IDE implementa)
+
+Tras cada bloque de trabajo (no solo al final), la IA del IDE llama a
+`informe_de_trabajo` con lo que hizo y la **evidencia real** de las pruebas; el
+arquitecto lee ese informe, el contexto del repositorio y la memoria de la sesion,
+y devuelve el siguiente lote priorizado con `sugerir_mejoras`:
+
+```
+   IA del IDE implementa
+        |  informe_de_trabajo(hechos, evidencia, sugerencias_propias)
+        v
+   ARQUITECTO lee informe + contexto real del repo + memoria de la sesion
+        |  sugerir_mejoras()
+        v
+   sugerencias priorizadas (SUGERENCIAS.md) --> IA del IDE implementa otra vez
+        ...
+   hasta [[ARQUITECTO: FIN]] | el usuario escribe PARAR | tope de rondas
+```
+
+- **Todo queda en el proyecto**: `INFORME.md` (lo que hizo el IDE, ronda a ronda)
+  y `SUGERENCIAS.md` (lo que devolvio el arquitecto).
+- **Memoria**: `datos/sesiones/<proyecto>/turno-NN.json`, para no repetir
+  sugerencias ya resueltas y sobrevivir a reinicios del IDE.
+- **Sin fugas**: lo que se manda al arquitecto pasa por un saneador de secretos
+  (valores del `.env`, claves `sk-`, tokens de GitHub, JWT, bloques PEM) y tiene
+  tope de tamano.
+- **Sin bucles infinitos**: corta con `[[ARQUITECTO: FIN]]`, la palabra `PARAR` en
+  el informe o `ARQUITECTO_MAX_RONDAS` (def. 10).
+- **Herramientas nuevas**: `activar_proyecto`, `informe_de_trabajo`,
+  `sugerir_mejoras` y `estado_de_sesion` (esta ultima es gratis: no gasta tokens).
+
+
+---
+
 ## Puesta en marcha (5 minutos)
 
 ### 1. Instalar
@@ -137,7 +202,7 @@ Si copias la carpeta a otra ruta, actualiza esas dos rutas absolutas.
 `command` = `...\venv\Scripts\python.exe`, `args` = `...\arquitecto_mcp.py`.
 
 Despues, en Cursor: *Settings → MCP* debe mostrar `arquitecto-externo` en verde
-con **27 herramientas**. Si sale en rojo, mira la seccion *Problemas frecuentes*.
+con **31 herramientas**. Si sale en rojo, mira la seccion *Problemas frecuentes*.
 
 ### 5. Conectar Cline (opcional, recomendado)
 
@@ -172,7 +237,7 @@ herramientas.
 
 | Archivo | Responsabilidad |
 |---|---|
-| `arquitecto_mcp.py` | Servidor MCP (FastMCP + stdio). Capa fina: declara las 27 herramientas y las expone. |
+| `arquitecto_mcp.py` | Servidor MCP (FastMCP + stdio). Capa fina: declara las 31 herramientas y las expone. |
 | `arquitecto.py` | Nucleo del rol ARQUITECTO: `consultar()`, `reportar_progreso()`, estado, reinicio, exportar plan. |
 | `ejecutor.py` | Nucleo del rol PROGRAMADOR externo: pide los archivos completos y las correcciones. |
 | `protocolo.py` | Contrato entre las IAs: system prompts, marcadores, formato de salida y parser de `### ARCHIVO:`. |
@@ -182,6 +247,7 @@ herramientas.
 | `rutas.py` | **Sandbox**: normaliza nombres y valida que todo quede dentro de las raices permitidas. |
 | `plantillas.py` | Catalogo de plantillas (7): archivos, notas y requirements fusionables. Inyecta ademas la **capa de orquestacion** (`.clinerules`, `.cursorrules`, `AGENTS.md`, `.cursor/mcp.json`, `.env.example`) en todo proyecto nuevo. |
 | `herramientas_archivos.py` | Unica puerta a disco: leer, escribir, listar, buscar, mover y borrar. |
+| `procesos.py` | Unica puerta a procesos externos (`git`, `gh`, `python`, `pytest`): no hereda el `stdin` del MCP, no abre consola nueva en Windows y corta al hijo por tiempo. Sin esto, el primer `git` lanzado desde el servidor se queda colgado (bug real: `estado_fabrica` moria por timeout del IDE). |
 | `fabrica.py` | Crea proyectos, aplica plantillas, `git init`, commits, registro y GitHub. |
 | `orquestador.py` | Bucle autonomo desde consola: idea -> proyecto -> plan -> codigo -> pruebas -> commit. |
 | `prueba_loop.py` | Simulador del loop completo desde consola (sin abrir Cursor). |
@@ -710,7 +776,9 @@ funcionan antes de conectar el modelo real.
 | El orquestador no encuentra `cline` | Instala Cline CLI o usa `--modo interno` (`ARQUITECTO_ORQUESTADOR=interno`). |
 | Quiero verificar que la fabrica funciona antes de usarla | `venv\Scripts\python.exe scripts\verificar_fabrica.py` (crea todo en una carpeta temporal y no toca tu registro real). |
 | El CI de GitHub falla al instante, sin jobs y sin duracion | El workflow es YAML invalido (GitHub no lo valida en tu maquina). Mira *Annotations* en la ejecucion: dice la linea (`Invalid workflow file: .github/workflows/ci.yml#LNN`). Valida antes de subir con `venv\Scripts\python.exe -c "import yaml;yaml.safe_load(open('.github/workflows/ci.yml',encoding='utf-8'))"`. Un `: ` (dos puntos y espacio) sin comillas en un `run:` ya lo rompe. |
-| El check `SonarCloud Code Analysis` falla | Ese check no es el CI: es el analisis automatico de SonarQube Cloud. Entra en sonarcloud.io, mira los issues y el quality gate del proyecto; el detalle del enlace esta en el propio check. |
+| Un check `SonarCloud Code Analysis` falla | Ese check no es el CI: es el analisis automatico de SonarQube Cloud. Entra en sonarcloud.io, mira los issues y el quality gate del proyecto; el detalle del enlace esta en el propio check. |
+| Una herramienta MCP que ejecuta `git` (`estado_git`, `estado_fabrica`, `preparar_entorno`...) se queda colgada y el IDE da timeout | El hijo heredaba el `stdin` del protocolo MCP y no arrancaba nunca (quedaban procesos `git` vivos minutos despues). Se arregla en `procesos.py`: todo proceso pasa por `procesos.ejecutar` con `stdin=DEVNULL` y `CREATE_NO_WINDOW`. Si añades una llamada nueva, no uses `subprocess.run` directo. |
+| `test_regresion_ningun_modulo_lanza_subprocess_directo` falla | Alguien ha vuelto a llamar a `subprocess.run`/`subprocess.Popen` en un modulo de produccion. Usa `procesos.ejecutar` (o `ejecutar_texto`) o el cuelgue del punto anterior reaparece. |
 | Un paso del CI muere en segundos con `Process completed with exit code 1` | `pwsh` en Actions usa `$ErrorActionPreference = 'Stop'`: si un script del repositorio escribe en **stderr** (los verificadores y los logs lo hacen a proposito), lo toma por error terminante y aborta el paso. Pon `$ErrorActionPreference = 'Continue'` al principio del `run:` y comprueba tu mismo `$LASTEXITCODE`. |
 
 Los logs del servidor van **siempre a stderr** (con `ARQUITECTO_LOG=DEBUG` para

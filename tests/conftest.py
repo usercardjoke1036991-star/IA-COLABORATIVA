@@ -29,6 +29,7 @@ def sandbox(tmp_path, monkeypatch):
     proyectos.mkdir()
     monkeypatch.setenv("ARQUITECTO_CARPETA_PROYECTOS", str(proyectos))
     monkeypatch.setenv("ARQUITECTO_REGISTRO", str(tmp_path / "proyectos.json"))
+    monkeypatch.setenv("ARQUITECTO_CARPETA_SESIONES", str(tmp_path / "sesiones"))
     monkeypatch.setenv("ARQUITECTO_GIT_USUARIO", "Fabrica de Pruebas")
     monkeypatch.setenv("ARQUITECTO_GIT_EMAIL", "fabrica@example.com")
     monkeypatch.delenv("ARQUITECTO_PERMITIR_EXTERNO", raising=False)

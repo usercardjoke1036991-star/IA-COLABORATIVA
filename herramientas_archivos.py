@@ -54,11 +54,48 @@ def config_fabrica() -> configuracion.ConfigFabrica:
     return configuracion.cargar_fabrica()
 
 
+def base_registrada(proyecto: str):
+    """Carpeta real de un proyecto registrado, o ``None`` si no aplica.
+
+    Los proyectos ACTIVADOS sobre una carpeta existente viven donde el usuario
+    quiera (dentro de las raices permitidas): su ficha guarda esa ruta y las
+    herramientas deben trabajar ahi, no en ``proyectos/<slug>``. Sin esto,
+    activar una carpeta cuyo nombre no es un slug la dejaria desconectada.
+    """
+    nombre = (proyecto or "").strip()
+    if not nombre:
+        return None
+    try:
+        import fabrica  # import diferido a proposito: fabrica importa este modulo
+
+        ficha = fabrica.cargar_registro().get(rutas.normalizar_nombre(nombre))
+    except Exception:  # nunca tumbar una herramienta por leer el registro
+        return None
+    if not isinstance(ficha, dict):
+        return None
+    indicada = str(ficha.get("ruta") or "").strip()
+    if not indicada:
+        return None
+    try:
+        carpeta = Path(indicada).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return None
+    return carpeta if carpeta.is_dir() else None
+
+
+def base_de_proyecto(proyecto: str) -> Path:
+    """Carpeta base sobre la que operan las herramientas de archivos."""
+    registrada = base_registrada(proyecto)
+    if registrada is not None:
+        return registrada
+    return rutas.ruta_de_proyecto(proyecto) if (proyecto or "").strip() else rutas.raiz_fabrica()
+
+
 def _resolver(proyecto: str, ruta: str, crear_padres: bool = False) -> Path:
     """Resuelve una ruta del proyecto aplicando el sandbox de :mod:`rutas`."""
-    return rutas.resolver_en_proyecto(
-        proyecto,
+    return rutas.resolver(
         ruta,
+        base=base_de_proyecto(proyecto),
         crear_padres=crear_padres,
         permitir_externo=config_fabrica().permitir_externo,
     )
@@ -88,7 +125,7 @@ def _es_binario(ruta: Path) -> bool:
 
 def _relativa(destino: Path, proyecto: str) -> str:
     """Ruta mostrada al modelo: relativa al proyecto cuando es posible."""
-    base = rutas.ruta_de_proyecto(proyecto) if (proyecto or "").strip() else rutas.raiz_fabrica()
+    base = base_de_proyecto(proyecto)
     try:
         return str(destino.relative_to(base)).replace("\\", "/")
     except ValueError:  # ruta externa permitida por ARQUITECTO_PERMITIR_EXTERNO

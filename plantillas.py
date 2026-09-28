@@ -252,7 +252,29 @@ Si una prueba o un comando falla:
    codigo lo escribes TU.
 4. Tras 2-3 intentos en rojo, para y reporta el `bloqueo` con la traza exacta.
 
-## 6. Loop continuo hasta cerrar la tarea
+## 6. Bucle de mejora continua (informe -> sugerencias -> implementar)
+
+Esto es lo que hace que el proyecto mejore solo, ronda a ronda. Tras CADA bloque
+de trabajo (no solo al final del plan):
+
+1. `informe_de_trabajo(proyecto="__NOMBRE__", hechos=..., evidencia=...,
+   sugerencias_propias=..., archivos_tocados=...)`:
+   - `hechos`: que implementaste, sin adornos.
+   - `evidencia`: el comando exacto y su salida REAL (pega la traza tal cual).
+   - `sugerencias_propias`: lo que TU ves mejorable, priorizado.
+2. `sugerir_mejoras(proyecto="__NOMBRE__")`: el ARQUITECTO lee tu informe, el
+   contexto real del repositorio y la memoria de la sesion, y devuelve el
+   siguiente lote priorizado (queda escrito en `SUGERENCIAS.md`).
+3. Implementa esas mejoras, ejecuta las pruebas de verdad y vuelve al paso 1.
+4. El bucle se corta cuando `sugerir_mejoras` diga `TAREA TERMINADA` /
+   `[[ARQUITECTO: FIN]]`, cuando el usuario escriba PARAR, o cuando se agote
+   `ARQUITECTO_MAX_RONDAS` (el servidor lo controla solo).
+5. Antes de parar definitivamente: entrega al usuario el informe final
+   (`INFORME.md` y `SUGERENCIAS.md`) y como probarlo.
+
+Nunca inventes evidencia: si una prueba falla, pega el fallo real y corrigelo.
+
+## 7. Loop continuo hasta cerrar la tarea
 
 Por cada bloque de trabajo:
 
@@ -265,7 +287,7 @@ Por cada bloque de trabajo:
    `[[ARQUITECTO: FIN]]`): verifica los criterios de aceptacion, ejecuta la
    verificacion final y entrega al usuario el resumen y como probarlo.
 
-## 7. Publicar (solo si el usuario lo pide)
+## 8. Publicar (solo si el usuario lo pide)
 
 `publicar_en_github(proyecto="__NOMBRE__")` necesita `gh` instalado y con sesion
 (`gh auth login`). Si no esta, explica al usuario como instalarlo.
@@ -295,16 +317,23 @@ Este proyecto lo mantiene un equipo de dos IAs:
 Las reglas completas estan en `.clinerules` (Cline) y en `.cursorrules` /
 `.cursor/rules/arquitecto.mdc` (Cursor). Resumen operativo:
 
-1. Antes de una tarea nueva o un cambio amplio: `consultar_arquitecto`.
-2. Trabaja siempre con `proyecto="__NOMBRE__"` y rutas relativas.
-3. Si falta una credencial: deja la variable vacia en `.env`, PARA y pide el
+1. Si la carpeta no tiene `.clinerules` ni `.cursor/rules/arquitecto.mdc`, llama
+   primero a `activar_proyecto` (registra la carpeta y te devuelve el kit de
+   arranque con el contexto real del repositorio).
+2. Antes de una tarea nueva o un cambio amplio: `consultar_arquitecto`.
+3. Trabaja siempre con `proyecto="__NOMBRE__"` y rutas relativas.
+4. Si falta una credencial: deja la variable vacia en `.env`, PARA y pide el
    valor al usuario con el formato `BLOQUEO: CREDENCIALES`. Nunca inventes
    claves ni dejes mocks silenciosos.
-4. El arquitecto decide y la IA del IDE construye; ante un error real corrige
+5. El arquitecto decide y la IA del IDE construye; ante un error real corrige
    ella misma con `escribir_archivo` y repite las pruebas (no delega el codigo:
    `corregir_con_el_programador` esta prohibido en el IDE).
-5. Cierra cada bloque con `commit_proyecto` + `reportar_progreso` y continua
+6. Cierra cada bloque con `commit_proyecto` + `reportar_progreso` y continua
    mientras el loop diga `estado del loop: EN CURSO`.
+7. Bucle de mejora continua: tras cada bloque, `informe_de_trabajo` (hechos +
+   evidencia real + tus sugerencias) y despues `sugerir_mejoras`, que devuelve
+   el siguiente lote priorizado del arquitecto. Repite hasta que el bucle cierre
+   con `[[ARQUITECTO: FIN]]`, el usuario diga PARAR o se agoten las rondas.
 """
 
 #: Plantilla de credenciales: campos vacios listos para rellenar.
@@ -329,6 +358,8 @@ OPENAI_API_KEY=
 ARQUITECTO_PROVIDER=deepseek
 ARQUITECTO_MODEL=deepseek-reasoner
 ARQUITECTO_EJECUTOR_MODEL=deepseek-chat
+# ARQUITECTO_MAX_TOKENS=8192   # sube el tope de salida si usas un modelo "reasoner"
+# ARQUITECTO_MAX_RONDAS=10     # tope de rondas del bucle de mejora continua
 # ARQUITECTO_MOCK=true   # modo simulado: sin API key y sin coste (solo pruebas)
 """
 

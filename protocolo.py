@@ -15,6 +15,9 @@ from __future__ import annotations
 MARCADOR_PLAN = "[PLAN INICIAL]"
 MARCADOR_PROGRESO = "[INFORME DE PROGRESO]"
 
+#: Marcador del informes del bucle de mejora continua (ronda a ronda).
+MARCADOR_MEJORA = "[INFORME DE MEJORA CONTINUA]"
+
 #: Marcadores del contrato con el rol PROGRAMADOR (segundo modelo, el que codifica).
 MARCADOR_TAREA = "[TAREA DE CODIGO]"
 MARCADOR_CORRECCION = "[CORRECCION DE ERROR]"
@@ -65,6 +68,27 @@ ESTRUCTURA SUGERIDA DE RESPUESTA
 2. ...
 ## Riesgos y decisiones tecnicas
 - ...
+
+MODO MEJORA CONTINUA (bucle informe -> sugerencias -> implementacion)
+-------------------------------------------------------------------
+El PROGRAMADOR puede trabajar en RONDAS dentro del mismo objetivo. En cada
+ronda te manda: su informe (que hizo, con la evidencia REAL de las pruebas), el
+contexto del repositorio y la memoria de la sesion (las ultimas rondas y tus
+directrices anteriores). Tu respondes en este formato exacto:
+
+## Diagnostico
+(que mejora de verdad y que no, con criterio tecnico; nada de complacencia)
+## Sugerencias
+1. [valor alto] QUE -> DONDE -> criterio de terminado.
+2. [valor medio] ...
+(maximo 5 por ronda, de mas valor a menos; nada de relleno)
+## Riesgos
+(lo que puede romperse al tocar esos puntos y como verificarlo)
+
+Reglas del bucle: no repitas una sugerencia que la memoria de la sesion ya da
+por resuelta; exige evidencia real en vez de promesas; y si no queda ninguna
+mejora de valor, NO inventes trabajo: cierra la respuesta con el marcador
+exacto {marcador}.
 """.format(marcador=MARCADOR_FIN)
 
 
@@ -266,6 +290,44 @@ def formatear_error(mensaje: str) -> str:
 # --------------------------------------------------------------------------
 # Analisis de la respuesta del PROGRAMADOR
 # --------------------------------------------------------------------------
+def bloque_mejora(
+    proyecto: str,
+    informe: str,
+    contexto: str = "",
+    memoria: str = "",
+) -> str:
+    """Mensaje del bucle de mejora continua: informe + contexto + memoria.
+
+    Args:
+        proyecto: nombre del proyecto registrado en la fabrica.
+        informe: que hizo el PROGRAMADOR, con la evidencia real (obligatorio).
+        contexto: resumen real del repositorio (ya saneado de secretos).
+        memoria: resumen de la sesion (rondas previas y directrices).
+
+    Returns:
+        Texto listo para enviar al Arquitecto, con el marcador del bucle.
+    """
+    partes = [
+        MARCADOR_MEJORA,
+        "",
+        "PROYECTO: {}".format((proyecto or "").strip() or "(sin nombre)"),
+        "",
+        "INFORME DEL PROGRAMADOR (ronda cerrada):",
+        (informe or "").strip(),
+    ]
+    if contexto:
+        partes += ["", "CONTEXTO REAL DEL REPOSITORIO:", contexto.strip()]
+    if memoria:
+        partes += ["", "MEMORIA DE LA SESION:", memoria.strip()]
+    partes += [
+        "",
+        "TAREA: devuelve el siguiente lote priorizado de mejoras para este proyecto",
+        "siguiendo el MODO MEJORA CONTINUA. Si no queda ninguna mejora de valor,",
+        "cierra la respuesta con {}.".format(MARCADOR_FIN),
+    ]
+    return "\n".join(partes)
+
+
 def _limpiar_ruta(ruta: str) -> str:
     """Normaliza la ruta anunciada por el modelo (barras, comillas, espacios)."""
     limpia = (ruta or "").strip().strip("`'\"").strip()

@@ -29,6 +29,7 @@ from typing import Dict, List, Optional, Tuple
 import config as configuracion
 import herramientas_archivos as archivos
 import plantillas
+import procesos
 import rutas
 
 RUTA_REGISTRO = configuracion.RAIZ_PROYECTO / "datos" / "proyectos.json"
@@ -140,6 +141,7 @@ class Proyecto:
     commit: str = ""
     github: str = ""
     estado: str = "creado"
+    stack: str = ""
 
     def resumen(self) -> str:
         """Linea de resumen para el modelo o para la consola."""
@@ -149,6 +151,8 @@ class Proyecto:
             "git={}".format("si" if self.con_git else "no"),
             "estado={}".format(self.estado),
         ]
+        if self.stack:
+            piezas.append("stack={}".format(self.stack))
         if self.commit:
             piezas.append("commit={}".format(self.commit[:8]))
         if self.github:
@@ -257,6 +261,83 @@ def olvidar_proyecto(nombre: str) -> str:
     return "Quitado del registro '{}' (la carpeta sigue en disco).".format(limpio)
 
 
+def registrar_proyecto_existente(
+    ruta,
+    nombre: str = "",
+    stack: str = "",
+    descripcion: str = "",
+) -> Proyecto:
+    """Registra en la fabrica una carpeta que YA existe (no crea ni mueve nada).
+
+    Es la puerta que usa la activacion automatica: el usuario crea una carpeta,
+    la abre en el IDE y queda dentro del sistema con su ruta real. Se puede
+    llamar tantas veces como haga falta: el registro es un *upsert* por nombre,
+    asi que reabrir la carpeta no duplica fichas ni pierde datos.
+
+    Args:
+        ruta: carpeta existente (absoluta, o relativa al directorio actual).
+        nombre: nombre con el que se registra; por defecto, el slug de la carpeta.
+        stack: stack detectado ('python', 'node'...); informativo.
+        descripcion: frase corta del objetivo, si se conoce.
+
+    Returns:
+        La ficha registrada.
+
+    Raises:
+        ErrorFabrica: si la carpeta no existe, no es una carpeta o se sale de
+            las raices permitidas por el sandbox.
+    """
+    cfg = configuracion.cargar_fabrica()
+    texto = str(ruta or "").strip()
+    if not texto:
+        raise ErrorFabrica("Indica la carpeta que quieres registrar (ruta vacia).")
+    candidata = Path(texto).expanduser()
+    if not candidata.is_absolute():
+        candidata = Path.cwd() / candidata
+    try:
+        carpeta = candidata.resolve()
+    except (OSError, RuntimeError) as exc:
+        raise ErrorFabrica("No se pudo resolver {}: {}".format(texto, exc))
+
+    if not carpeta.exists() or not carpeta.is_dir():
+        raise ErrorFabrica(
+            "No existe la carpeta {} (o no es una carpeta). Creala o revisa la ruta.".format(
+                carpeta
+            )
+        )
+    if not cfg.permitir_externo:
+        permitidas = rutas.raices_permitidas()
+        if not any(rutas.esta_dentro(carpeta, raiz) for raiz in permitidas):
+            raise ErrorFabrica(
+                "La carpeta {} esta fuera de las raices permitidas.\n"
+                "Permitido: {}\n"
+                "Si de verdad quieres activar proyectos ahi, pon "
+                "ARQUITECTO_PERMITIR_EXTERNO=true en el .env y reinicia el "
+                "servidor MCP.".format(carpeta, ", ".join(str(raiz) for raiz in permitidas))
+            )
+
+    limpio = rutas.normalizar_nombre(nombre or carpeta.name)
+    registro = cargar_registro()
+    previo = registro.get(limpio) or {}
+    tiene_git = (carpeta / ".git").exists()
+    con_git = bool(previo.get("con_git")) or tiene_git
+
+    ficha = Proyecto(
+        nombre=limpio,
+        ruta=str(carpeta),
+        descripcion=descripcion or previo.get("descripcion", "") or "Proyecto activado desde el IDE.",
+        plantillas=list(previo.get("plantillas") or ["activado"]),
+        creado=previo.get("creado") or datetime.now().isoformat(timespec="seconds"),
+        con_git=con_git,
+        commit=previo.get("commit", ""),
+        github=previo.get("github", ""),
+        estado="activado",
+        stack=stack or previo.get("stack", ""),
+    )
+    registrar_proyecto(ficha)
+    return ficha
+
+
 def ficha_proyecto(nombre: str) -> Proyecto:
     """Devuelve la ficha registrada de un proyecto."""
     limpio = rutas.normalizar_nombre(nombre)
@@ -291,16 +372,7 @@ def _ejecutar(comando: List[str], cwd: Path, timeout: int = 300) -> Tuple[int, s
         ErrorFabrica: si el ejecutable no existe o se pasa del tiempo.
     """
     try:
-        proceso = subprocess.run(
-            comando,
-            cwd=str(cwd),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-            shell=False,
-        )
+        codigo, salida, error = procesos.ejecutar(comando, cwd=cwd, timeout=timeout)
     except FileNotFoundError:
         raise ErrorFabrica(
             "No se encontro el ejecutable '{}'. Instalalo o anadelo al PATH.".format(comando[0])
@@ -311,8 +383,7 @@ def _ejecutar(comando: List[str], cwd: Path, timeout: int = 300) -> Tuple[int, s
                 " ".join(comando), timeout
             )
         )
-    salida = "{}\n{}".format(proceso.stdout or "", proceso.stderr or "").strip()
-    return proceso.returncode, salida
+    return codigo, "{}\n{}".format(salida, error).strip()
 
 
 def git_disponible() -> str:

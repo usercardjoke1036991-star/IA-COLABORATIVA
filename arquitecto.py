@@ -133,6 +133,36 @@ class Arquitecto:
         respuesta.meta["archivos_tocados"] = archivos_tocados.strip()
         return respuesta
 
+    # -- Herramienta 3: bucle de mejora continua ---------------------------
+    def revisar_mejoras(
+        self,
+        proyecto: str,
+        informe: str,
+        contexto: str = "",
+        memoria: str = "",
+    ) -> Respuesta:
+        """Pide el siguiente lote de mejoras a partir del informe de una ronda.
+
+        Es el motor del bucle IDE <-> API: el PROGRAMADOR informa (con evidencia
+        real de lo que ejecuto), el Arquitecto propone mejoras priorizadas y el
+        PROGRAMADOR las implementa en la ronda siguiente.
+        """
+        if not (informe or "").strip():
+            return self._error(
+                "El informe esta vacio: describe que se hizo y pega la evidencia real."
+            )
+
+        self.historial.registrar_mejora(proyecto, informe, contexto, memoria)
+        respuesta = self._llamar_al_proveedor()
+        if respuesta.error:
+            return respuesta
+
+        self.historial.registrar_directriz(respuesta.contenido)
+        respuesta.turno = self.historial.turno()
+        respuesta.meta["proyecto"] = (proyecto or "").strip()
+        respuesta.meta["informe"] = informe.strip()
+        return respuesta
+
     # -- Utilidades --------------------------------------------------------
     def estado(self) -> str:
         """Diagnostico legible del estado del loop (no gasta tokens)."""

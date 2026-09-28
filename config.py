@@ -53,6 +53,8 @@ ARQUITECTO_ORQUESTADOR          cline | interno: quien ejecuta el bucle autonomo
 ARQUITECTO_CLINE_COMANDO        ejecutable de Cline CLI (def. cline)
 ARQUITECTO_CLINE_AUTO           true|false, pasa --yolo al CLI (def. false)
 ARQUITECTO_LIMITE_TURNOS        tope de iteraciones del orquestador (def. 6)
+ARQUITECTO_MAX_RONDAS           tope de rondas del bucle de mejora continua por sesion (def. 10)
+ARQUITECTO_CARPETA_SESIONES     carpeta de la memoria del bucle (def. datos/sesiones)
 """
 
 from __future__ import annotations
@@ -190,6 +192,7 @@ class ConfigFabrica:
     cline_comando: str = "cline"
     cline_auto: bool = False
     limite_turnos: int = 6
+    max_rondas: int = 10
 
     def resumen(self) -> str:
         """Resumen legible de la configuracion de la fabrica."""
@@ -386,6 +389,7 @@ def cargar_fabrica(ruta_env: Path = RUTA_ENV) -> ConfigFabrica:
         cline_comando=_texto("ARQUITECTO_CLINE_COMANDO", "cline"),
         cline_auto=_bool("ARQUITECTO_CLINE_AUTO", False),
         limite_turnos=max(1, _int("ARQUITECTO_LIMITE_TURNOS", 6)),
+        max_rondas=max(1, _int("ARQUITECTO_MAX_RONDAS", 10)),
     )
 
 

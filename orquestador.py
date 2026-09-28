@@ -40,6 +40,7 @@ import config as configuracion
 import fabrica
 import herramientas_archivos as archivos
 import plantillas
+import procesos
 import protocolo
 import rutas
 from arquitecto import Arquitecto
@@ -167,23 +168,14 @@ class Orquestador:
         comando = [str(interprete), "-m", "pytest", "-q"] + carpetas
         _paso("Ejecutando pruebas: {}".format(" ".join(comando)))
         try:
-            proceso = subprocess.run(
-                comando,
-                cwd=str(destino),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=900,
-                shell=False,
-            )
+            codigo, salida, error = procesos.ejecutar(comando, cwd=destino, timeout=900)
         except (OSError, subprocess.TimeoutExpired) as exc:
             return -1, "No se pudieron ejecutar las pruebas: {}".format(exc)
 
-        salida = "{}\n{}".format(proceso.stdout or "", proceso.stderr or "").strip()
+        salida = "{}\n{}".format(salida, error).strip()
         if "No module named pytest" in salida or "No module named 'pytest'" in salida:
             return -1, "pytest no esta instalado en el interprete usado:\n{}".format(salida[-400:])
-        return proceso.returncode, salida or "(pytest no devolvio salida)"
+        return codigo, salida or "(pytest no devolvio salida)"
 
     # -- Un turno de trabajo ----------------------------------------------
     def aplicar_entrega(self, entregados) -> List[str]:
@@ -372,15 +364,8 @@ class Orquestador:
             ]
             _paso("TURNO {}/{} delegado a '{}'".format(numero, turnos, self.cfg.cline_comando))
             try:
-                proceso = subprocess.run(
-                    comando,
-                    cwd=self.resultado.ruta,
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=3600,
-                    shell=False,
+                codigo, salida, error = procesos.ejecutar(
+                    comando, cwd=self.resultado.ruta, timeout=3600
                 )
             except FileNotFoundError:
                 print(
@@ -395,7 +380,7 @@ class Orquestador:
                 self.resultado.log.append("timeout de cline")
                 return self.cerrar()
 
-            salida = "{}\n{}".format(proceso.stdout or "", proceso.stderr or "").strip()
+            salida = "{}\n{}".format(salida, error).strip()
             print(salida[-3000:])
             self.resultado.pruebas = "delegadas a Cline"
 
@@ -411,7 +396,7 @@ class Orquestador:
                 resumen_de_lo_hecho=(
                     "Ronda {} ejecutada por Cline CLI (codigo {}). Ultimas lineas:\n{}".format(
                         numero,
-                        "OK" if proceso.returncode == 0 else "con errores",
+                        "OK" if codigo == 0 else "con errores",
                         salida[-1200:],
                     )
                 ),

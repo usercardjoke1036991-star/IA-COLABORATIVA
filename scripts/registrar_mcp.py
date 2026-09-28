@@ -2,13 +2,16 @@
 
 Escribe (fusionando, no pisando lo que ya hubiera):
 
-* ``.cursor/mcp.json`` (Cursor del proyecto).
-* los ``cline_mcp_settings.json`` de Cline que encuentre (app y extension de
-  VS Code), respetando los servidores ya configurados.
+* ``.cursor/mcp.json`` del proyecto y el **global** del usuario
+  (``~/.cursor/mcp.json``): con el global, cualquier carpeta que abras en Cursor
+  ya tiene las herramientas del arquitecto, sin tocar nada.
+* los ``cline_mcp_settings.json`` de Cline que encuentre (app de escritorio y
+  extension en los editores de la familia VS Code), respetando los servidores
+  ya configurados.
 
-Solo escribe en el proyecto y en la configuracion del usuario donde Cline guarda
-sus servidores MCP: cualquier otro destino se rechaza antes de tocar el disco
-(regla SonarQube ``pythonsecurity:S2083`` / ``:S8707``).
+Solo escribe en el proyecto y en la configuracion personal del usuario:
+cualquier otro destino se rechaza antes de tocar el disco (regla SonarQube
+``pythonsecurity:S2083`` / ``:S8707``).
 
 Uso:
     venv\\\\Scripts\\\\python.exe scripts\\\\registrar_mcp.py
@@ -38,15 +41,19 @@ PATRON_NOMBRE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 def _raices_permitidas() -> list:
     """Carpetas dentro de las que este script acepta escribir.
 
-    Son las dos que tienen sentido: el proyecto (``.cursor/mcp.json``) y la
-    configuracion del usuario donde Cline guarda sus servidores MCP.
+    Son las que tienen sentido: el proyecto (``.cursor/mcp.json``), la carpeta
+    personal de Cursor (``~/.cursor``, o sea el registro GLOBAL que hace que
+    cualquier carpeta abierta tenga el servidor) y la configuracion del usuario
+    donde Cline guarda sus servidores MCP.
     """
     raices = [RAIZ.resolve()]
     usuario = Path(os.environ.get("USERPROFILE") or Path.home()).expanduser()
     raices.append((usuario / ".cline").resolve())
+    raices.append((usuario / ".cursor").resolve())
     appdata = (os.environ.get("APPDATA") or "").strip()
     if appdata:
         raices.append((Path(appdata) / "Code").resolve())
+        raices.append((Path(appdata) / "Cursor").resolve())
     return raices
 
 
@@ -160,14 +167,37 @@ def _fusionar(ruta: Path, nombre: str, entrada: dict, raiz_json: str = "mcpServe
 
 
 def _destinos_cline() -> list:
-    """Rutas de settings de Cline que existen en esta maquina."""
+    """Rutas de settings de Cline que existen en esta maquina.
+
+    Se contemplan la app de escritorio (``~/.cline``) y la extension instalada
+    en cualquiera de los editores de la familia VS Code. Las rutas de APPDATA se
+    construyen **solo** si la variable existe: asi nunca aparece un destino
+    relativo al directorio de trabajo.
+    """
     usuario = Path(os.environ.get("USERPROFILE") or Path.home())
     candidatos = [
         usuario / ".cline" / "data" / "settings" / "cline_mcp_settings.json",
-        Path(os.environ.get("APPDATA", "")) / "Code" / "User" / "globalStorage"
-        / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json",
     ]
+    appdata = (os.environ.get("APPDATA") or "").strip()
+    if appdata:
+        for editor in ("Code", "Cursor"):
+            candidatos.append(
+                Path(appdata) / editor / "User" / "globalStorage"
+                / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json"
+            )
     return [ruta for ruta in candidatos if ruta.parent.parent.exists() or ruta.exists()]
+
+
+def _destinos_cursor() -> list:
+    """JSON de Cursor donde se registra el servidor: el del proyecto y el global.
+
+    El de la carpeta personal (``~/.cursor/mcp.json``) es el que hace que
+    CUALQUIER carpeta que se abra en Cursor tenga ya las herramientas del
+    arquitecto; el del proyecto queda versionado junto al codigo y sirve de
+    respaldo para esa carpeta concreta.
+    """
+    usuario = Path(os.environ.get("USERPROFILE") or Path.home()).expanduser()
+    return [RAIZ / ".cursor" / "mcp.json", usuario / ".cursor" / "mcp.json"]
 
 
 def main(argv=None) -> int:
@@ -190,7 +220,8 @@ def main(argv=None) -> int:
     print("nombre    : {}".format(opciones.nombre))
     print("")
 
-    print("[Cursor]  {}".format(_fusionar(RAIZ / ".cursor" / "mcp.json", opciones.nombre, entrada)))
+    for ruta in _destinos_cursor():
+        print("[Cursor]  {}".format(_fusionar(ruta, opciones.nombre, entrada)))
 
     destinos = _destinos_cline()
     if not destinos:
