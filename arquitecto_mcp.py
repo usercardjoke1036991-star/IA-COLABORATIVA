@@ -707,7 +707,6 @@ def construir_servidor():
 
     # -- fin de las herramientas del programador ---------------------------
     return servidor
-    return servidor
 
 
 # --------------------------------------------------------------------------
