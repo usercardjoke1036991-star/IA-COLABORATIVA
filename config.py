@@ -44,6 +44,7 @@ ARQUITECTO_REGISTRO             ruta del registro de proyectos (def. datos/proye
 ARQUITECTO_PERMITIR_EXTERNO     true|false, permite escribir fuera de las raices (def. false)
 ARQUITECTO_PLANTILLAS           plantillas por defecto (def. python)
 ARQUITECTO_CREAR_VENV           true|false, crea el entorno virtual al crear proyecto (def. true)
+ARQUITECTO_INSTALAR_DEPENDENCIAS true|false, instala las librerias al crear proyecto (def. false)
 ARQUITECTO_GIT_USUARIO          usuario para los commits de la fabrica
 ARQUITECTO_GIT_EMAIL            email para los commits de la fabrica
 ARQUITECTO_GITHUB               true|false, publica el repo en GitHub via gh (def. false)
@@ -182,7 +183,8 @@ class ConfigFabrica:
     raiz_proyectos: Path = RAIZ_PROYECTO / "proyectos"
     permitir_externo: bool = False
     plantillas_por_defecto: List[str] = field(default_factory=lambda: ["python"])
-    crear_venv: bool = False
+    crear_venv: bool = True
+    instalar_dependencias: bool = False
     git_usuario: str = ""
     git_email: str = ""
     github: bool = False
@@ -197,11 +199,12 @@ class ConfigFabrica:
     def resumen(self) -> str:
         """Resumen legible de la configuracion de la fabrica."""
         return (
-            "proyectos={} | plantillas={} | venv={} | github={} ({}) | "
+            "proyectos={} | plantillas={} | venv={} | instalar={} | github={} ({}) | "
             "orquestador={} | auto={} | turnos={} | externo={}".format(
                 self.raiz_proyectos,
                 ", ".join(self.plantillas_por_defecto) or "(ninguna)",
                 self.crear_venv,
+                self.instalar_dependencias,
                 self.github,
                 self.github_visor,
                 self.orquestador,
@@ -379,7 +382,8 @@ def cargar_fabrica(ruta_env: Path = RUTA_ENV) -> ConfigFabrica:
         raiz_proyectos=raiz,
         permitir_externo=_bool("ARQUITECTO_PERMITIR_EXTERNO", False),
         plantillas_por_defecto=plantillas or ["vacio"],
-        crear_venv=_bool("ARQUITECTO_CREAR_VENV", False),
+        crear_venv=_bool("ARQUITECTO_CREAR_VENV", True),
+        instalar_dependencias=_bool("ARQUITECTO_INSTALAR_DEPENDENCIAS", False),
         git_usuario=_texto("ARQUITECTO_GIT_USUARIO"),
         git_email=_texto("ARQUITECTO_GIT_EMAIL"),
         github=_bool("ARQUITECTO_GITHUB", False),

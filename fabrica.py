@@ -460,6 +460,7 @@ def crear_proyecto(
     publicar: Optional[bool] = None,
     visor: str = "",
     forzar: bool = False,
+    instalar_dependencias: Optional[bool] = None,
 ) -> str:
     """Crea un proyecto nuevo, lo rellena con plantillas y lo registra.
 
@@ -473,6 +474,11 @@ def crear_proyecto(
             lo que diga ``ARQUITECTO_GITHUB``).
         visor: ``private`` o ``public`` (por defecto, ``ARQUITECTO_GITHUB_VISOR``).
         forzar: permite reutilizar una carpeta que ya tiene archivos.
+        instalar_dependencias: instala las librerias en el ``venv/`` del propio
+            proyecto nada mas crearlo (``None`` = lo que diga
+            ``ARQUITECTO_INSTALAR_DEPENDENCIAS``). Nunca aborta la creacion: si
+            la instalacion falla, el proyecto existe igual y el motivo queda
+            escrito en el informe como ``estado_dependencias``.
 
     Returns:
         Informe en texto con lo que se creo, lo que fallo y los siguientes pasos.
@@ -501,8 +507,13 @@ def crear_proyecto(
 
     escritos = archivos.escribir_varios(limpio, andamiaje.archivos)
 
+    quiere_instalar = (
+        cfg.instalar_dependencias if instalar_dependencias is None else bool(instalar_dependencias)
+    )
+
     detalle_venv = "no creado (ARQUITECTO_CREAR_VENV=false)"
-    if cfg.crear_venv:
+    if cfg.crear_venv or quiere_instalar:
+        # Sin venv no hay donde instalar: pedir dependencias lo fuerza.
         try:
             detalle_venv = _crear_venv(destino)
         except ErrorFabrica as exc:
@@ -514,6 +525,25 @@ def crear_proyecto(
     if con_git_real:
         _, detalle_git, commit = inicializar_git(destino)
 
+    # Las dependencias se instalan DESPUES del commit: si pip tarda o el IDE
+    # corta la llamada, el proyecto ya esta creado, commiteado y registrado.
+    estado_dependencias = ""
+    detalle_dependencias = ""
+    if quiere_instalar:
+        # Ojo: aqui el parametro ``instalar_dependencias`` (bool) tapa el nombre
+        # de la funcion, por eso el ayudante se llama ``_instalar_dependencias``.
+        resultado = _instalar_dependencias(destino, timeout=TIMEOUT_INSTALACION)
+        estado_dependencias = ESTADOS_DEPENDENCIAS.get(resultado["estado"], resultado["estado"])
+        detalle_dependencias = "- Dependencias: estado_dependencias={} (manifiesto: {})".format(
+            estado_dependencias, resultado["manifiesto"] or "ninguno"
+        )
+        if resultado["reintento"]:
+            detalle_dependencias += " {}".format(resultado["reintento"])
+        if resultado["stderr_resumen"]:
+            # El diagnostico de pip no se pierde: sin el, "pendiente" seria opaco.
+            cola = " ".join(resultado["stderr_resumen"].split())[-400:]
+            detalle_dependencias += "\n  pip dijo: {}".format(cola)
+
     ficha = Proyecto(
         nombre=limpio,
         ruta=str(destino),
@@ -522,7 +552,11 @@ def crear_proyecto(
         creado=datetime.now().isoformat(timespec="seconds"),
         con_git=con_git_real and bool(commit),
         commit=commit,
-        estado="creado",
+        estado=(
+            "creado (dependencias pendientes)"
+            if estado_dependencias.startswith("pendiente")
+            else "creado"
+        ),
     )
 
     quiere_publicar = cfg.github if publicar is None else bool(publicar)
@@ -533,6 +567,8 @@ def crear_proyecto(
         "- Entorno: {}".format(detalle_venv),
         "- Git: {}".format(detalle_git),
     ]
+    if detalle_dependencias:
+        lineas.append(detalle_dependencias)
     if andamiaje.avisos:
         lineas.append("- Avisos: {}".format("; ".join(andamiaje.avisos)))
 
@@ -603,19 +639,135 @@ def _crear_venv(destino: Path) -> str:
     return "venv/ creado (dependencias pendientes: usa preparar_entorno)"
 
 
-def preparar_entorno(nombre: str, instalar: bool = True, timeout: int = 900) -> str:
-    """Crea ``venv/`` dentro del proyecto e instala ``requirements.txt``.
+#: Segundos maximos para instalar dependencias (alineado con la herramienta MCP).
+TIMEOUT_INSTALACION = 900
+
+#: Traduccion del estado interno del instalador al informe del proyecto.
+ESTADOS_DEPENDENCIAS = {
+    "ok": "ok",
+    "sin_manifest": "pendiente_sin_requirements",
+    "pendiente_error_red": "pendiente_error_red",
+    "pendiente_timeout": "pendiente_timeout",
+}
+
+
+def _instalar_dependencias(destino: Path, timeout: int = TIMEOUT_INSTALACION) -> Dict[str, object]:
+    """Instala las librerias del proyecto DENTRO de su propio ``venv/``.
+
+    Nunca se usa el Python global ni otra carpeta: se invoca el interprete de
+    ``venv/`` con ``cwd`` en la raiz del proyecto, asi que las librerias caen en
+    ``<proyecto>/venv/Lib/site-packages``.
+
+    Un fallo de red, de compilacion o de tiempo NO levanta excepcion: devuelve
+    un estado explicito para que quien llame informe en vez de dar por hecho
+    algo falso.
+
+    Args:
+        destino: carpeta raiz del proyecto.
+        timeout: segundos maximos para ``pip``.
+
+    Returns:
+        ``{estado, manifiesto, comandos_ejecutados, stderr_resumen, reintento}``
+        con ``estado`` en ``ok``, ``sin_manifest``, ``pendiente_error_red`` o
+        ``pendiente_timeout``.
+    """
+    interprete = interprete_venv(destino)
+    if (destino / "requirements.txt").exists():
+        comando = [
+            str(interprete),
+            "-m",
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+            "-r",
+            "requirements.txt",
+        ]
+        manifiesto = "requirements.txt"
+    elif (destino / "pyproject.toml").exists():
+        comando = [
+            str(interprete),
+            "-m",
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+            "-e",
+            ".",
+        ]
+        manifiesto = "pyproject.toml"
+    else:
+        return {
+            "estado": "sin_manifest",
+            "manifiesto": "",
+            "comandos_ejecutados": [],
+            "stderr_resumen": "",
+            "reintento": "",
+        }
+
+    comandos = [" ".join(comando)]
+    try:
+        codigo, salida, error = procesos.ejecutar(comando, cwd=destino, timeout=timeout)
+    except FileNotFoundError as exc:
+        return _resultado_dependencias("pendiente_error_red", manifiesto, comandos, str(exc), destino)
+    except subprocess.TimeoutExpired:
+        return _resultado_dependencias(
+            "pendiente_timeout",
+            manifiesto,
+            comandos,
+            "pip tardo mas de {}s y se cancelo.".format(timeout),
+            destino,
+        )
+    except OSError as exc:
+        return _resultado_dependencias("pendiente_error_red", manifiesto, comandos, str(exc), destino)
+
+    if codigo != 0:
+        return _resultado_dependencias(
+            "pendiente_error_red",
+            manifiesto,
+            comandos,
+            "{}\n{}".format(salida, error).strip(),
+            destino,
+        )
+    return {
+        "estado": "ok",
+        "manifiesto": manifiesto,
+        "comandos_ejecutados": comandos,
+        "stderr_resumen": "",
+        "reintento": "",
+    }
+
+
+def _resultado_dependencias(
+    estado: str, manifiesto: str, comandos: List[str], detalle: str, destino: Path
+) -> Dict[str, object]:
+    """Resultado de una instalacion que no salio bien, con el comando exacto de reintento."""
+    resumen = (detalle or "").strip()
+    if len(resumen) > 1500:
+        resumen = resumen[-1500:]
+    return {
+        "estado": estado,
+        "manifiesto": manifiesto,
+        "comandos_ejecutados": comandos,
+        "stderr_resumen": resumen,
+        "reintento": "Reintenta con preparar_entorno(proyecto='{}', instalar=true).".format(
+            destino.name
+        ),
+    }
+
+
+def preparar_entorno(nombre: str, instalar: bool = True, timeout: int = TIMEOUT_INSTALACION) -> str:
+    """Crea ``venv/`` dentro del proyecto e instala sus dependencias.
 
     Es un paso aparte (y lento) a proposito: crear el proyecto debe ser rapido e
-    infalible; instalar dependencias puede tardar minutos o fallar por red.
+    infalible; instalar dependencias puede tardar minutos o fallar por red. Por
+    eso un fallo de ``pip`` NO lanza excepcion: se informa del estado real, para
+    que nadie crea que hay librerias cuando no las hay.
 
     Args:
         nombre: proyecto registrado.
-        instalar: instala las dependencias del ``requirements.txt`` si existe.
+        instalar: instala las dependencias del ``requirements.txt`` (o del
+            ``pyproject.toml``) si existe.
         timeout: segundos maximos para la instalacion.
     """
-    import sys
-
     ficha = ficha_proyecto(nombre)
     destino = Path(ficha.ruta)
     if not destino.exists():
@@ -623,37 +775,27 @@ def preparar_entorno(nombre: str, instalar: bool = True, timeout: int = 900) -> 
 
     interprete = interprete_venv(destino)
     if not interprete.exists():
-        codigo, salida = _ejecutar([sys.executable, "-m", "venv", "venv"], cwd=destino, timeout=300)
-        if codigo != 0:
-            raise ErrorFabrica("No se pudo crear el entorno virtual: {}".format(salida))
-        lineas = ["Entorno virtual creado en venv/"]
+        lineas = [_crear_venv(destino)]
     else:
         lineas = ["El entorno virtual ya existia."]
 
-    requerimientos = destino / "requirements.txt"
-    if instalar and requerimientos.exists():
-        codigo, salida = _ejecutar(
-            [
-                str(interprete),
-                "-m",
-                "pip",
-                "install",
-                "--disable-pip-version-check",
-                "-r",
-                "requirements.txt",
-            ],
-            cwd=destino,
-            timeout=timeout,
-        )
-        if codigo != 0:
-            raise ErrorFabrica("pip install fallo: {}".format(salida[-1500:]))
-        lineas.append("Dependencias instaladas ({}).".format("requirements.txt"))
-    elif not requerimientos.exists():
-        lineas.append("Sin requirements.txt: nada que instalar.")
+    if not instalar:
+        lineas.append("Dependencias no instaladas (instalar=false).")
+    else:
+        resultado = _instalar_dependencias(destino, timeout=timeout)
+        estado = resultado["estado"]
+        if estado == "sin_manifest":
+            lineas.append("Sin requirements.txt ni pyproject.toml: nada que instalar.")
+        elif estado == "ok":
+            lineas.append("Dependencias instaladas ({}).".format(resultado["manifiesto"]))
+        else:
+            lineas.append("AVISO: dependencias pendientes (estado={}).".format(estado))
+            lineas.append("Comando exacto: {}".format(" ".join(resultado["comandos_ejecutados"])))
+            if resultado["stderr_resumen"]:
+                lineas.append("Salida de pip (recortada):\n{}".format(resultado["stderr_resumen"]))
+            lineas.append(str(resultado["reintento"]))
 
-    lineas.append(
-        "Usa el interprete del proyecto: {}".format(interprete)
-    )
+    lineas.append("Usa el interprete del proyecto: {}".format(interprete))
     return "\n".join("- {}".format(linea) for linea in lineas)
 
 

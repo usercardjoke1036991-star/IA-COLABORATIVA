@@ -31,8 +31,15 @@ Cuando el trabajo no sea un retoque del proyecto actual sino algo nuevo:
 
 4. `catalogo_plantillas` para elegir plantillas (se combinan: `python,web3`).
 5. `crear_proyecto` con nombre, descripcion y plantillas. Crea carpeta aislada,
-   escribe el andamiaje, hace `git init` + primer commit y lo registra.
-6. `preparar_entorno` con `instalar=true` si vas a ejecutar o probar el codigo.
+   escribe el andamiaje, crea el `venv/` del proyecto, hace `git init` + primer
+   commit y lo registra.
+6. Las librerias **siempre** se instalan dentro de la carpeta del proyecto (en su
+   `venv/`), nunca en el Python global. Elige **un solo camino**:
+   - `crear_proyecto(..., instalar_dependencias=true)`, o
+   - `preparar_entorno(proyecto="<slug>", instalar=true)` justo despues.
+   No uses los dos: se instalaria dos veces.
+   Si el informe trae `estado_dependencias=pendiente_*`, dilo al usuario con el
+   comando de reintento; no afirmes que hay librerias cuando la instalacion fallo.
 7. A partir de ahi trabaja SIEMPRE con `proyecto="<slug>"` y rutas relativas.
 
 ## 3. Trabajar con archivos: las herramientas MCP, no el disco

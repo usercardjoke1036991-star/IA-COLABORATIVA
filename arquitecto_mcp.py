@@ -288,6 +288,7 @@ def construir_servidor():
         con_git: bool = True,
         publicar: bool = False,
         visor: str = "",
+        instalar_dependencias: bool | None = None,
     ) -> str:
         """Crea un proyecto nuevo en su carpeta aislada, con plantillas y git.
 
@@ -303,6 +304,10 @@ def construir_servidor():
             con_git: inicializa el repositorio y hace el primer commit.
             publicar: intenta crear y subir el repositorio en GitHub (requiere gh).
             visor: 'private' o 'public' (por defecto, lo del .env).
+            instalar_dependencias: instala las librerias dentro del ``venv/`` del
+                propio proyecto (timeout 900 s). El proyecto se crea igual si la
+                instalacion falla: el informe trae ``estado_dependencias``. Vacio
+                (por defecto) = lo que diga ``ARQUITECTO_INSTALAR_DEPENDENCIAS``.
 
         Returns:
             Informe con la ruta, los archivos creados y los siguientes pasos.
@@ -315,6 +320,7 @@ def construir_servidor():
                 con_git=con_git,
                 publicar=publicar,
                 visor=visor,
+                instalar_dependencias=instalar_dependencias,
             )
         except (fabrica.ErrorFabrica, rutas.ErrorRuta, archivos.ErrorArchivo) as exc:
             return protocolo.formatear_error(str(exc))

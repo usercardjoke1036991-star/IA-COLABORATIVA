@@ -33,7 +33,11 @@ def sandbox(tmp_path, monkeypatch):
     monkeypatch.setenv("ARQUITECTO_GIT_USUARIO", "Fabrica de Pruebas")
     monkeypatch.setenv("ARQUITECTO_GIT_EMAIL", "fabrica@example.com")
     monkeypatch.delenv("ARQUITECTO_PERMITIR_EXTERNO", raising=False)
-    monkeypatch.delenv("ARQUITECTO_CREAR_VENV", raising=False)
+    # Los tests no crean venv reales (tardan y ensucian el temporal): el flujo
+    # con dependencias se prueba aparte con dobles en
+    # tests/test_crear_con_dependencias.py.
+    monkeypatch.setenv("ARQUITECTO_CREAR_VENV", "false")
+    monkeypatch.delenv("ARQUITECTO_INSTALAR_DEPENDENCIAS", raising=False)
     return tmp_path
 
 

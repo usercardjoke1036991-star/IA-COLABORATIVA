@@ -287,7 +287,7 @@ herramientas.
 | `plantillas.py` | Catalogo de plantillas (7): archivos, notas y requirements fusionables. Inyecta ademas la **capa de orquestacion** (`.clinerules`, `.cursorrules`, `AGENTS.md`, `.cursor/mcp.json`, `.env.example`) en todo proyecto nuevo. |
 | `herramientas_archivos.py` | Unica puerta a disco: leer, escribir, listar, buscar, mover y borrar. |
 | `procesos.py` | Unica puerta a procesos externos (`git`, `gh`, `python`, `pytest`): no hereda el `stdin` del MCP, no abre consola nueva en Windows y corta el **arbol** del hijo por tiempo (Job Object con `KILL_ON_JOB_CLOSE` en Windows, grupo propio de procesos en POSIX), porque matar solo al padre dejaba nietos vivos. Sin esto, el primer `git` lanzado desde el servidor se queda colgado (bug real: `estado_fabrica` moria por timeout del IDE). |
-| `fabrica.py` | Crea proyectos, aplica plantillas, `git init`, commits, registro y GitHub. |
+| `fabrica.py` | Crea proyectos, aplica plantillas, `git init`, commits, registro, GitHub y el `venv/` con las librerias dentro del propio proyecto (`instalar_dependencias`). |
 | `orquestador.py` | Bucle autonomo desde consola: idea -> proyecto -> plan -> codigo -> pruebas -> commit. |
 | `prueba_loop.py` | Simulador del loop completo desde consola (sin abrir Cursor). |
 | `scripts/verificar_servidor.py` | Diagnostico de la instalacion + invocacion de herramientas por MCP. |
@@ -316,6 +316,9 @@ la consola.
 ```powershell
 # desde el chat del IDE (herramientas MCP):
 #   catalogo_plantillas()                 -> que plantillas hay
+#   crear_proyecto("Bot de arbitraje", "Vigila precios y avisa", "python,web3",
+#                  instalar_dependencias=true)   -> andamiaje + venv + librerias
+#   # o, en dos llamadas y eligiendo UN solo camino:
 #   crear_proyecto("Bot de arbitraje", "Vigila precios y avisa", "python,web3")
 #   preparar_entorno("bot-de-arbitraje")  -> venv + dependencias
 #   escribir_archivo("bot-de-arbitraje", "src/bot/main.py", "...")
@@ -385,12 +388,64 @@ los repone en el siguiente proyecto que crees.
 - `borrar_archivo` sobre una carpeta exige `recursivo=true`; borrar la raiz del
   proyecto esta prohibido.
 
+### Entorno virtual y librerias del proyecto
+
+Las librerias de un proyecto **siempre** acaban dentro de su propia carpeta, en
+`<proyecto>\venv\Lib\site-packages` (o `<proyecto>/venv/lib/...` en macOS y
+Linux). Nunca se instala nada en el Python global de la maquina.
+
+Dos formas, y **solo una por proyecto** (hacer las dos instala dos veces):
+
+```powershell
+# 1) en la misma llamada que lo crea
+crear_proyecto("Mi Api", "API interna", "python", instalar_dependencias=true)
+
+# 2) o justo despues
+crear_proyecto("Mi Api", "API interna", "python")
+preparar_entorno(proyecto="mi-api", instalar=true)
+```
+
+El `venv/` se crea por defecto (`ARQUITECTO_CREAR_VENV=true`). Instalar es
+*opt-in* porque puede tardar minutos o fallar por red:
+
+| Variable | Que hace | Por defecto |
+|---|---|---|
+| `ARQUITECTO_CREAR_VENV` | crea `venv/` al crear el proyecto (sin instalar nada) | `true` |
+| `ARQUITECTO_INSTALAR_DEPENDENCIAS` | instala las librerias al crear el proyecto | `false` |
+
+Pedir dependencias **fuerza** el `venv/` aunque `ARQUITECTO_CREAR_VENV=false`:
+sin entorno virtual no hay donde instalar.
+
+**La instalacion nunca aborta la creacion.** Si `pip` falla, el proyecto existe
+igual y el informe lo dice con el estado real:
+
+| `estado_dependencias` | Significa | Que hacer |
+|---|---|---|
+| `ok` | librerias instaladas en su `venv/` | nada |
+| `pendiente_sin_requirements` | no hay `requirements.txt` ni `pyproject.toml` | escribe las dependencias y reinstala |
+| `pendiente_error_red` | `pip` devolvio error (red, compilador, version...) | mira el error que acompana y reintenta |
+| `pendiente_timeout` | `pip` paso de 900 s y se cancelo | reintenta (o instala a mano) |
+
+Reintento en todos los casos de `pendiente_*`:
+
+```powershell
+# herramienta MCP
+preparar_entorno(proyecto="mi-api", instalar=true)
+
+# equivalente a mano, con el interprete del propio proyecto
+cd proyectos\mi-api
+venv\Scripts\python.exe -m pip install -r requirements.txt   # o: -e .
+```
+
+Si no hay `requirements.txt` pero si `pyproject.toml`, se instala con
+`pip install -e .` (modo editable) dentro del mismo `venv/`.
+
 ### Git y GitHub
 
 - `crear_proyecto` hace `git init -b main` y el primer commit (con la identidad de
-  `ARQUITECTO_GIT_USUARIO`/`ARQUITECTO_GIT_EMAIL` si las defines). Con
-  `ARQUITECTO_CREAR_VENV=true` crea tambien el `venv/` (sin instalar nada); las
-  dependencias las instala `preparar_entorno`.
+  `ARQUITECTO_GIT_USUARIO`/`ARQUITECTO_GIT_EMAIL` si las defines) y crea el `venv/`
+  del proyecto. Las librerias se instalan despues **dentro de ese `venv/`**: mira
+  *Entorno virtual y librerias del proyecto* mas arriba.
 - `estado_git` muestra rama, cambios, ultimos commits y remotos.
 - `commit_proyecto` guarda cada bloque de trabajo: es tu red de seguridad.
 - `publicar_en_github` usa **GitHub CLI**:
@@ -817,6 +872,8 @@ funcionan antes de conectar el modelo real.
 | Las respuestas son enormes y caras | Baja `ARQUITECTO_MAX_TOKENS` y `ARQUITECTO_MAX_TURNOS` (menos contexto por peticion). |
 | Quiero probar sin gastar nada | Pon `ARQUITECTO_MOCK=true` en `.env` (respuestas simuladas, sin red). El simulador tambien "programa": entrega archivos de ejemplo para probar la fabrica completa. |
 | `crear_proyecto` dice que la carpeta no esta vacia | Ya existe un proyecto con ese nombre. Usa `forzar=true` para reutilizarla o elige otro nombre: `listar_proyectos` te los lista. |
+| El informe trae `estado_dependencias=pendiente_*` | El proyecto se creo, pero `pip` no dejo las librerias dentro de su `venv/`. Mira el error que acompana al estado y reintenta con `preparar_entorno(proyecto="<slug>", instalar=true)`. Detalle en *Entorno virtual y librerias del proyecto*. |
+| No quiero instalar librerias al crear proyectos | Deja `ARQUITECTO_INSTALAR_DEPENDENCIAS=false` (es el valor por defecto) y llama a `preparar_entorno` solo cuando lo necesites. |
 | `Ruta fuera de las raices permitidas` | El sandbox funcionando: la fabrica solo escribe en `proyectos/` y en este repositorio. Si de verdad necesitas otra ruta, `ARQUITECTO_PERMITIR_EXTERNO=true` y reinicia el servidor MCP. |
 | `La carpeta .git esta protegida` | Es a proposito. Para el estado del repositorio usa `estado_git` / `commit_proyecto`, no `escribir_archivo`. |
 | `gh repo create fallo` | GitHub CLI sin sesion o nombre ocupado: `gh auth login` y comprueba el nombre con `gh repo view`. |

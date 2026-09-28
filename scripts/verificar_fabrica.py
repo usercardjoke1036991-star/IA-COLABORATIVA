@@ -251,6 +251,7 @@ def paso_fabrica(fabrica, nombre: str, con_venv: bool) -> None:
     _comprobar("Ficha:" in arbol and "README.md" in arbol, "informe_proyecto resume ficha y archivos")
 
     comprobar_publicacion(fabrica, nombre)
+    comprobar_dependencias(fabrica, nombre)
 
     if con_venv:
         print(preparar_entorno(fabrica, nombre))
@@ -300,6 +301,53 @@ def comprobar_publicacion(fabrica, nombre: str) -> None:
         _fallo("sin gh la publicacion deberia fallar", publicar[:80])
         return
     _comprobar("github.com" in publicar, "publicacion en GitHub", publicar[:120])
+
+
+def comprobar_dependencias(fabrica, nombre: str) -> None:
+    """Comprueba que las librerias caen dentro del proyecto, sin usar la red.
+
+    Se crea un segundo proyecto con una plantilla sin ``requirements.txt`` y
+    ``instalar_dependencias=True``: eso fuerza el ``venv/`` del propio proyecto
+    (aunque ``ARQUITECTO_CREAR_VENV`` este en ``false``) y no llega a ejecutar
+    ``pip`` porque no hay manifiesto. Lo que se verifica es la decision de
+    diseno: la instalacion nunca aborta la creacion y el venv vive en el
+    proyecto, no en el Python global.
+    """
+    _comprobar(
+        hasattr(fabrica.configuracion.cargar_fabrica(), "instalar_dependencias"),
+        "la config de la fabrica expone instalar_dependencias",
+    )
+    _comprobar(
+        "instalar=" in fabrica.configuracion.cargar_fabrica().resumen(),
+        "el resumen de la fabrica muestra el flag de instalacion",
+    )
+
+    sin_deps = "{}-sin-deps".format(nombre)
+    informe = fabrica.crear_proyecto(
+        sin_deps,
+        "proyecto sin manifiesto, para verificar el estado pendiente",
+        ["vacio"],
+        con_git=False,
+        publicar=False,
+        instalar_dependencias=True,
+    )
+    print(informe)
+    raiz = Path(fabrica.ficha_proyecto(sin_deps).ruta)
+    _comprobar(
+        "estado_dependencias=pendiente_sin_requirements" in informe,
+        "sin manifiesto avisa con estado pendiente en vez de fallar",
+    )
+    _comprobar(raiz.is_dir(), "el proyecto existe pese al estado pendiente", str(raiz))
+    _comprobar(
+        (raiz / "venv").is_dir(),
+        "pedir dependencias fuerza el venv/ dentro del proyecto",
+        str(fabrica.interprete_venv(raiz)),
+    )
+    _comprobar(
+        str(fabrica.interprete_venv(raiz)).startswith(str(raiz)),
+        "el interprete que se usaria vive dentro del proyecto (nunca el global)",
+        str(fabrica.interprete_venv(raiz)),
+    )
 
 
 def preparar_entorno(fabrica, nombre: str) -> str:
