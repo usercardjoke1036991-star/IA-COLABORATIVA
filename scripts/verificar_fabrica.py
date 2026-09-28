@@ -250,31 +250,56 @@ def paso_fabrica(fabrica, nombre: str, con_venv: bool) -> None:
     arbol = fabrica.informe_proyecto(nombre, profundidad=1)
     _comprobar("Ficha:" in arbol and "README.md" in arbol, "informe_proyecto resume ficha y archivos")
 
-    try:
-        publicar = fabrica.publicar_en_github(nombre)
-        if fabrica.hay_gh():
-            _comprobar("github.com" in publicar, "publicacion en GitHub", publicar[:120])
-        else:
-            _fallo("sin gh la publicacion deberia fallar", publicar[:80])
-    except fabrica.ErrorFabrica as exc:
-        mensaje = str(exc)
-        if fabrica.hay_gh():
-            _fallo("publicacion en GitHub", mensaje[:160])
-        else:
-            _comprobar(
-                "gh" in mensaje.lower() and "auth login" in mensaje.lower(),
-                "sin gh informa de como instalarlo y autenticarse",
-            )
-            print(
-                "  mensaje de la fabrica sobre gh:\n{}".format(
-                    "\n".join("    " + linea for linea in mensaje.splitlines()[:4])
-                )
-            )
+    comprobar_publicacion(fabrica, nombre)
 
     if con_venv:
         print(preparar_entorno(fabrica, nombre))
     else:
         print("  nota: usa --venv para crear el entorno virtual real (tarda un poco)")
+
+
+def comprobar_publicacion(fabrica, nombre: str) -> None:
+    """Comprueba las tres respuestas correctas de ``publicar_en_github``.
+
+    1. Sin ``gh``: la fabrica explica como instalarlo y autenticarse.
+    2. ``gh`` instalado pero sin sesion: es el estado normal de un runner de CI,
+       y la fabrica debe pedir ``gh auth login`` en vez de reventar.
+    3. ``gh`` con sesion: devuelve la URL del repositorio creado.
+    """
+    hay_gh = fabrica.hay_gh()
+    if hay_gh:
+        print("  nota: hay gh instalado; si tiene sesion, esta comprobacion crea de")
+        print("        verdad el repositorio remoto del proyecto temporal de prueba.")
+    try:
+        publicar = fabrica.publicar_en_github(nombre)
+    except fabrica.ErrorFabrica as exc:
+        mensaje = str(exc)
+        bajo = mensaje.lower()
+        if not hay_gh:
+            _comprobar(
+                "gh" in bajo and "auth login" in bajo,
+                "sin gh informa de como instalarlo y autenticarse",
+            )
+        elif "sin sesion" in bajo:
+            _comprobar(
+                "gh auth login" in bajo,
+                "gh sin sesion pide 'gh auth login' en vez de reventar",
+                mensaje[:120],
+            )
+        else:
+            _fallo("publicacion en GitHub", mensaje[:160])
+            return
+        print(
+            "  mensaje de la fabrica sobre gh:\n{}".format(
+                "\n".join("    " + linea for linea in mensaje.splitlines()[:4])
+            )
+        )
+        return
+
+    if not hay_gh:
+        _fallo("sin gh la publicacion deberia fallar", publicar[:80])
+        return
+    _comprobar("github.com" in publicar, "publicacion en GitHub", publicar[:120])
 
 
 def preparar_entorno(fabrica, nombre: str) -> str:

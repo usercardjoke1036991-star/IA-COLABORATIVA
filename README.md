@@ -186,7 +186,7 @@ herramientas.
 | `orquestador.py` | Bucle autonomo desde consola: idea -> proyecto -> plan -> codigo -> pruebas -> commit. |
 | `prueba_loop.py` | Simulador del loop completo desde consola (sin abrir Cursor). |
 | `scripts/verificar_servidor.py` | Diagnostico de la instalacion + invocacion de herramientas por MCP. |
-| `scripts/verificar_fabrica.py` | Verificacion end-to-end de la fabrica en una carpeta temporal. |
+| `scripts/verificar_fabrica.py` | Verificacion end-to-end de la fabrica en una carpeta temporal (no toca tu registro real). Acepta los tres estados de `gh`: sin instalar, instalado sin sesion y con sesion; si hay sesion, crea de verdad el repositorio remoto del proyecto temporal. |
 | `scripts/prueba_cliente_mcp.py` | Cliente MCP por `stdio` que habla con el servidor como lo hace Cursor. |
 | `scripts/registrar_mcp.py` | Registra el servidor en Cursor y en Cline (fusionando JSON). |
 | `scripts/registrar_en_cline.ps1` | Registro especifico para Cline (CLI + settings). |
