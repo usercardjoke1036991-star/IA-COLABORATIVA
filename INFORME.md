@@ -95,3 +95,105 @@ AGENTS.md, INFORME.md, SUGERENCIAS.md, .vscode/tasks.json (capa de orquestacion 
 2. [media] Llevar esta regresion al verificador, no solo a pytest: scripts/verificar_fabrica.py ya prueba "borrado de la raiz bloqueado" y buscar_archivos, pero sobre un proyecto creado en proyectos/<slug>. Falta el caso "proyecto activado sobre una carpeta con otro nombre" (activar + listar sin subcarpeta + intento de borrado de la raiz), que es justo el que se escapo.
 3. [baja] ruff no esta en requirements-dev.txt ni instalado en el venv ni en el CI (solo pytest + verificadores + Sonar), asi que no hay lint local reproducible: si se quiere, añadirlo a requirements-dev.txt y a un paso del workflow.
 4. [baja] .vscode/tasks.json queda versionado con la ruta absoluta del venv de esta maquina; en otro clon la tarea de arranque apuntaria a una ruta inexistente. Podria resolverse con ${workspaceFolder} + un interprete relativo.
+
+## Ronda 2 - 
+
+### Que se hizo
+
+BLOQUE CERRADO Y PUBLICADO. Commit 0e4888e (7 archivos, +490/-8), push a origin/main OK y CI verde.
+
+1) OPcion C ejecutada: candado nuevo en rutas.resolver llamado confinar_a_base. Con el activo (lo que piden las herramientas de archivos) se rechaza (a) cualquier segmento '..' en la ruta -porque resolve() colapsa './sub/..' a la propia raiz y confiar solo en la comparacion de rutas dejaba pasar esa forma- y (b) cualquier ruta resuelta que caiga fuera de la base declarada, incluidos los enlaces que apuntan fuera. El candado se comprueba ANTES de crear carpetas madres, asi que un intento rechazado no deja rastro. NO lo relaja ARQUITECTO_PERMITIR_EXTERNO a proposito: ese permiso sirve para elegir donde vive una carpeta, no para que una herramienta se salga de su proyecto (documentado en codigo y README).
+
+2) Superficie entera cubierta: herramientas_archivos._resolver pasa confinar_a_base=True, asi que leer, escribir, crear_carpeta, mover (origen y destino), borrar, listar_proyecto, buscar_en_contenido, buscar_archivos e info_archivo quedan dentro del proyecto activo. activacion._escribir tambien lo pasa (misma politica al inyectar la capa).
+
+3) Fuga por enlaces cerrada: nuevo filtro _fuera_del_proyecto + _recorrer(base=...) para que un symlink o junction hacia fuera no se liste, ni se busque, ni se lea; y mover ya no puede llevarse la raiz del proyecto.
+
+4) Tests de regresion: 61 nuevos. tests/test_sandbox_herramientas.py recorre las 8 herramientas con los 5 ataques clasicos, comprueba rastro cero, vecino intacto (incluido el borrado recursivo de '..', que antes se llevaba la fabrica entera), enlaces de fichero y de carpeta, y el caso de proyecto ACTIVADO sobre ruta fichada. tests/test_rutas.py añade el candado a nivel unidad (incluido el caso Windows con barras invertidas, marcado skipif para que Linux siga verde).
+
+5) scripts/verificar_fabrica.py paso 3: 5 comprobaciones nuevas de path traversal (leer/crear/borrar con '..' y '../vecino-secreto', vecino intacto, rastro cero). README: politica de sandbox documentada en las reglas de seguridad, en la seccion de sandbox y en la tabla de problemas.
+
+6) PUBLICACION (Opcion A): git push 88905ff..0e4888e main -> main (subio tambien 9060490). git ls-remote origin: refs/heads/main = 0e4888ef6205e49045727a409a11c6e34b47813c. Arbol limpio y datos/ y proyectos/ sin tocar.
+
+7) CI del SHA 0e4888e (run 36504285891): completed/success. Jobs: "Pruebas (windows-latest)" success, "Pruebas (ubuntu-latest)" success, "SonarQube" success; check-runs: SonarCloud Code Analysis = success. Sin solo-lectura de logs: leidos por API publica (gh esta instalado pero sin sesion).
+
+Nota de metodo: el terminal integrado del IDE sigue roto (PSReadLine) y no captura stdout; todo se ha ejecutado con scripts .ps1 lanzados fuera del arbol del terminal (WMI) y leido de fichero. Una primera ejecucion concurrente ensucio los ficheros de evidencia y hubo que parar procesos y repetir con nombres versionados: los resultados que se pegan abajo son de la ejecucion unica final.
+
+### Evidencia real
+
+```
+$ venv\Scripts\python.exe -m pytest -q
+........................................................................ [ 20%]
+........................................................................ [ 40%]
+........................................................................ [ 61%]
+........................................................................ [ 81%]
+.............s..................................................         [100%]
+SKIPPED [1] tests\test_sandbox_herramientas.py:177: esta maquina no permite crear enlaces
+351 passed, 1 skipped in 117.10s (0:01:57)          -> pytest_exitcode=0
+(antes de este bloque: 290 passed; los +61 son los tests nuevos)
+
+$ venv\Scripts\python.exe -m pytest -q tests\test_sandbox_herramientas.py tests\test_rutas.py
+82 passed, 1 skipped in 99.44s (0:01:39)           -> focus_exitcode=0
+
+$ venv\Scripts\python.exe scripts\verificar_fabrica.py
+PASO 3: Herramientas de archivos
+  [OK]    escritura en .git bloqueada
+  [OK]    ruta con '..' bloqueada
+  [OK]    path traversal bloqueado en las herramientas (confinar_a_base)
+  [OK]    borrado de '..' bloqueado
+  [OK]    el proyecto vecino sigue intacto tras el intento
+  [OK]    escritura en el proyecto vecino bloqueada
+  [OK]    el intento rechazado no dejo rastro en el vecino
+  [OK]    borrado de carpeta sin recursivo bloqueado
+  [OK]    borrado de la raiz bloqueado
+============== RESUMEN: 77 comprobaciones OK, 0 FALLOS ===============
+
+$ git commit -m "fix(seguridad): confinar las herramientas de archivos al proyecto activo (path traversal)"
+[main 0e4888e] 7 files changed, 490 insertions(+), 8 deletions(-)
+ create mode 100644 tests/test_sandbox_herramientas.py
+$ git push
+To https://github.com/usercardjoke1036991-star/IA-COLABORATIVA.git
+   88905ff..0e4888e  main -> main             -> push_exit=0
+$ git ls-remote origin
+0e4888ef6205e49045727a409a11c6e34b47813c        refs/heads/main
+
+$ git status --porcelain          -> (vacio)
+$ git status --porcelain -- datos proyectos -> (vacio)
+
+API GitHub para 0e4888ef6205e49045727a409a11c6e34b47813c:
+run=36504285891 | CI | status=completed | conclusion=success
+  job=Pruebas (windows-latest) | completed | success
+  job=Pruebas (ubuntu-latest)  | completed | success
+  job=SonarQube                | completed | success
+check_runs=4
+  check=SonarCloud Code Analysis | completed | success
+
+Fallo real encontrado y corregido durante el bloque (para que quede constancia):
+  with pytest.raises(ErrorRuta, match="fuera del proyecto"): rutas.resolver("./sub/..", ...)
+  E  Failed: DID NOT RAISE ErrorRuta
+-> pathlib colapsa './sub/..' a la propia raiz del proyecto, asi que la comprobacion por
+   comparacion de rutas no lo atrapaba: de ahi la regla explicita de rechazar '..' en parts.
+```
+
+### Archivos tocados
+
+rutas.py
+herramientas_archivos.py
+activacion.py
+scripts/verificar_fabrica.py
+tests/test_rutas.py
+tests/test_sandbox_herramientas.py (nuevo)
+README.md
+
+### Sugerencias propias del programador
+
+1. Blindar el canal auxiliar de scripts: scripts/instalar.sh sigue llamando al interprete con ruta relativa sin comillas (venv/bin/python). Citar "$RAIZ/venv/bin/python" y anadir un guardian en verificar_fabrica.py + test que exija que toda llamada al interprete del venv en los scripts generados vaya entrecomillada. Es la clase de fallo que ya nos costo caro en la maquina de desarrollo.
+
+2. Escribir la politica como regla, no como costumbre: "todo contenido EXISTENTE de un proyecto se lee/escribe via base_de_proyecto() (la ruta fichada)". Quedan llamadas a rutas.ruta_de_proyecto en orquestador.py y scripts/verificar_servidor.py (legitimas porque CREAN proyectos), pero conviene documentarlo en README/AGENTS y añadir un test que falle si una herramienta de archivos vuelve a asumir proyectos/<slug>.
+
+3. Mismo tipo de riesgo en el registro: fabrica._carpeta_registro acepta una carpeta arbitraria del entorno cuando permitir_externo esta activo. Se podria exigir que el registro viva dentro de las raices o que el flag venga acompañado de una ruta explicita validada.
+
+4. Endurecer buscar_archivos (y listar_proyecto) con patrones raros: '..' en el patron, rutas con separadores, patrones absolutos. Hoy el glob se evalua sobre raiz.rglob y no puede escapar, pero rechazarlos con mensaje claro evita sorpresas futuras.
+
+5. CI: no hay lint. Anadir ruff (config minima en pyproject/ruff.toml) como paso del job pruebas daria una red barata contra errores de import/estilo en 30 s.
+
+6. Opcional: repetir la suite en POSIX a mano no hace falta ya (ubuntu-latest paso en verde), pero el test de enlaces de fichero solo se ejecuta donde el sistema permite symlinks; en Windows se cubre con la junction. Documentarlo en el README de tests para que nadie borre ese skip pensando que no prueba nada.

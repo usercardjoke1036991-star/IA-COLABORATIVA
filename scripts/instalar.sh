@@ -16,7 +16,7 @@ PY="python3"
 command -v "$PY" >/dev/null 2>&1 || PY="python"
 
 echo "[1/4] Entorno virtual en ./venv ..."
-if [[ ! -x "venv/bin/python" ]]; then
+if [[ ! -x "$RAIZ/venv/bin/python" ]]; then
     "$PY" -m venv venv
     echo "      creado."
 else
@@ -24,8 +24,10 @@ else
 fi
 
 echo "[2/4] Instalando dependencias ..."
-venv/bin/python -m pip install --upgrade pip --quiet
-venv/bin/python -m pip install -r requirements.txt --quiet
+# Las comillas NO son cosmeticas: el interprete vive bajo la ruta del proyecto y
+# sin ellas el shell parte la orden en el primer espacio ("IA COLABORATIVA").
+"$RAIZ/venv/bin/python" -m pip install --upgrade pip --quiet
+"$RAIZ/venv/bin/python" -m pip install -r requirements.txt --quiet
 echo "      mcp + requests instalados."
 
 echo "[3/4] Archivo .env ..."
@@ -37,11 +39,11 @@ else
 fi
 
 echo "[4/5] Registrando el servidor MCP (Cursor y Cline) ..."
-venv/bin/python scripts/registrar_mcp.py
+"$RAIZ/venv/bin/python" scripts/registrar_mcp.py
 
 echo "[5/5] Verificando el servidor MCP y la fabrica de proyectos ..."
-venv/bin/python scripts/verificar_servidor.py
-venv/bin/python scripts/verificar_fabrica.py
+"$RAIZ/venv/bin/python" scripts/verificar_servidor.py
+"$RAIZ/venv/bin/python" scripts/verificar_fabrica.py
 
 echo ""
 echo "Instalacion terminada."

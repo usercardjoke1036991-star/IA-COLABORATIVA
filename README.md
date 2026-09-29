@@ -393,6 +393,14 @@ los repone en el siguiente proyecto que crees.
 - Las extensiones ejecutables (`.exe`, `.dll`, `.msi`, `.scr`) estan bloqueadas.
 - `borrar_archivo` sobre una carpeta exige `recursivo=true`; borrar la raiz del
   proyecto esta prohibido.
+- **Politica de rutas**: para contenido que ya existe la carpeta del proyecto se
+  pregunta a `base_de_proyecto()` (la ruta de la **ficha**, que puede ser
+  cualquier carpeta activada); `rutas.ruta_de_proyecto()` (asume
+  `proyectos/<slug>`) se reserva a CREAR proyectos nuevos. Lo fija
+  `tests/test_politica_rutas.py` con inspeccion estatica.
+- El interprete del venv va **siempre entre comillas** en los scripts de shell
+  (`.sh`): sin comillas se parte en el primer espacio de la ruta del proyecto.
+  Lo vigila `scripts/verificar_fabrica.py` (paso 2).
 
 ### Entorno virtual y librerias del proyecto
 

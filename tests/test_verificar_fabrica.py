@@ -18,6 +18,8 @@ import os
 import stat
 from pathlib import Path
 
+import pytest
+
 RAIZ = Path(__file__).resolve().parent.parent
 RUTA_SCRIPT = RAIZ / "scripts" / "verificar_fabrica.py"
 
@@ -130,3 +132,63 @@ def test_main_borra_el_temporal_y_lo_dice(tmp_path, monkeypatch, capsys):
     assert codigo == 0
     assert "Carpeta temporal eliminada (el registro real no se toco)." in texto
     assert creados and not creados[0].exists()
+
+
+# --------------------------------------------------------------------------
+# Interprete del venv en scripts de shell: el candado de las comillas
+# --------------------------------------------------------------------------
+def test_la_revision_detecta_el_interprete_sin_comillas():
+    """Un ``venv/bin/python`` suelto se parte en la ruta con espacio."""
+    texto = (
+        "#!/usr/bin/env bash\n"
+        "venv/bin/python -m pip install -r requirements.txt --quiet\n"
+    )
+
+    fallos = verificador._lineas_sin_comillas(texto)
+
+    assert len(fallos) == 1
+    assert "venv/bin/python" in fallos[0]
+
+
+@pytest.mark.parametrize(
+    "linea",
+    [
+        '"$RAIZ/venv/bin/python" -m pip install -r requirements.txt',
+        '"venv/Scripts/python.exe" -m pytest -q',
+        'if [[ ! -x "$RAIZ/venv/bin/python" ]]; then',
+        'echo "  venv/bin/python arquitecto_mcp.py --check"',
+        "printf '%s\\n' 'venv/bin/python'",
+        "# venv/bin/python no hace falta aqui",
+        "",
+    ],
+)
+def test_la_revision_acepta_lo_que_esta_bien_o_solo_imprime(linea):
+    assert verificador._lineas_sin_comillas(linea) == []
+
+
+def test_los_scripts_de_shell_del_repositorio_citan_el_interprete():
+    """El candado sobre el propio repositorio: corre en local y en el CI."""
+    propios = sorted(RAIZ.glob("*.sh")) + sorted((RAIZ / "scripts").glob("*.sh"))
+    textos = verificador._textos_sh(propios)
+    assert textos, "no se encontro ningun script de shell que revisar"
+
+    fallos, revisados = verificador._revisar_scripts_sh(textos)
+
+    assert fallos == [], "interprete del venv sin comillas -> {}".format(" // ".join(fallos))
+    assert revisados == len(textos)
+
+
+def test_la_revision_mira_tambien_los_scripts_generados():
+    """Un .sh generado por la fabrica entra en la revision aunque no exista."""
+
+    def _con_venv_bin(seleccion, nombre, descripcion=""):
+        class _Andamiaje:
+            archivos = {"instalar.sh": "venv/bin/python -m pip install -r requirements.txt\n"}
+
+        return _Andamiaje()
+
+    sin_comillas = verificador._textos_sh([], _con_venv_bin("python", "demo").archivos)
+    fallos, revisados = verificador._revisar_scripts_sh(sin_comillas)
+
+    assert revisados == 1
+    assert fallos and "instalar.sh" in fallos[0]

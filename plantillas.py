@@ -334,6 +334,12 @@ Las reglas completas estan en `.clinerules` (Cline) y en `.cursorrules` /
    evidencia real + tus sugerencias) y despues `sugerir_mejoras`, que devuelve
    el siguiente lote priorizado del arquitecto. Repite hasta que el bucle cierre
    con `[[ARQUITECTO: FIN]]`, el usuario diga PARAR o se agoten las rondas.
+8. Politica de rutas: al tocar contenido que **ya existe** la carpeta se pregunta
+   a `base_de_proyecto()` (la ruta de la FICHA, que puede ser cualquier carpeta
+   activada); `rutas.ruta_de_proyecto()` (que asume `proyectos/<slug>`) se reserva
+   para CREAR proyectos nuevos. Las herramientas de archivos nunca salen de la
+   carpeta del proyecto (`confinar_a_base`), ni al leer, ni al buscar, ni al
+   listar: ni `..`, ni un enlace que apunte fuera.
 """
 
 #: Plantilla de credenciales: campos vacios listos para rellenar.

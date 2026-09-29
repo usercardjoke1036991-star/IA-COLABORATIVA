@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import socket
 import stat
@@ -93,6 +94,69 @@ def _borrar_temporal(ruta: Path, intentos: int = 3) -> bool:
         if not ruta.exists():
             return True
     return False
+
+
+# --------------------------------------------------------------------------
+# Interprete del venv en scripts de shell: siempre entre comillas
+# --------------------------------------------------------------------------
+#: Cualquier forma de nombrar el interprete de un venv (posix o Windows).
+_INTERPRETE_SH = re.compile(
+    r"(?:\$\{?RAIZ\}?/|\./)?venv/(?:bin|Scripts)/pythonw?(?:[0-9]+\.[0-9]+)?(?:\.exe)?"
+)
+
+#: Ordenes que solo imprimen texto: lo que va dentro no se ejecuta.
+_SOLO_IMPRIME = ("echo", "printf")
+
+
+def _lineas_sin_comillas(texto: str) -> list:
+    """Lineas que invocan el interprete del venv sin comillas alrededor.
+
+    ``venv/bin/python`` sin comillas se parte en dos argumentos en cuanto la
+    carpeta del proyecto lleva un espacio (aqui: ``IA COLABORATIVA``) y el script
+    muere con "No such file or directory". Las lineas de ``echo``/``printf`` se
+    ignoran a proposito: solo imprimen la recomendacion, no ejecutan nada.
+    """
+    sospechosas: list = []
+    for numero, linea in enumerate(texto.splitlines(), 1):
+        limpia = linea.split(" #", 1)[0].strip()
+        if not limpia or limpia.startswith("#"):
+            continue
+        if limpia.split()[0].lower() in _SOLO_IMPRIME:
+            continue
+        for hallazgo in _INTERPRETE_SH.finditer(limpia):
+            antes = limpia[hallazgo.start() - 1] if hallazgo.start() else ""
+            despues = limpia[hallazgo.end()] if hallazgo.end() < len(limpia) else ""
+            if antes and antes in "\"'" and despues and despues in "\"'":
+                continue
+            sospechosas.append("linea {}: {}".format(numero, limpia))
+    return sospechosas
+
+
+def _textos_sh(rutas, generados=None) -> dict:
+    """Junta ``nombre -> texto`` de los .sh de disco y de los generados.
+
+    Los generados llegan como ``nombre -> contenido`` (todavia no existen en
+    disco), asi que se revisan igual que los del repositorio.
+    """
+    textos: dict = {}
+    for ruta in rutas:
+        try:
+            textos[str(ruta)] = Path(ruta).read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+    for nombre, contenido in (generados or {}).items():
+        if str(nombre).endswith(".sh"):
+            textos[str(nombre)] = contenido
+    return textos
+
+
+def _revisar_scripts_sh(textos: dict) -> tuple:
+    """Revisa los textos de shell: devuelve ``(fallos, revisados)``."""
+    fallos: list = []
+    for nombre, contenido in textos.items():
+        for problema in _lineas_sin_comillas(contenido):
+            fallos.append("{} -> {}".format(nombre, problema))
+    return fallos, len(textos)
 
 
 # --------------------------------------------------------------------------
@@ -187,6 +251,21 @@ def paso_plantillas(plantillas) -> None:
             for r in scripts
         )
         _comprobar(correctos, "rutas del venv correctas en los .ps1", ", ".join(scripts))
+
+    # Scripts de shell: el interprete del venv SIEMPRE entre comillas. Sin ellas
+    # el shell parte la orden en el primer espacio de la ruta del proyecto (esta
+    # carpeta se llama "IA COLABORATIVA") y el script no arranca. Se revisan los
+    # .sh del repositorio y los que genere la fabrica (hoy: ninguno, pero el
+    # guardian queda puesto para el dia que existan).
+    propios = sorted(RAIZ.glob("*.sh")) + sorted((RAIZ / "scripts").glob("*.sh"))
+    fallos_sh, revisados_sh = _revisar_scripts_sh(_textos_sh(propios, andamiaje.archivos))
+    _comprobar(
+        not fallos_sh,
+        "interprete del venv entrecomillado en los scripts de shell",
+        "{} script(s) revisados{}".format(
+            revisados_sh, " // " + " // ".join(fallos_sh) if fallos_sh else ""
+        ),
+    )
 
 
 # --------------------------------------------------------------------------
