@@ -227,6 +227,48 @@ def paso_archivos(archivos, rutas, nombre: str) -> None:
     except (archivos.ErrorArchivo, rutas.ErrorRuta):
         _ok("ruta con '..' bloqueada")
 
+    # Path traversal de verdad: el proyecto vecino y la raiz comun de la fabrica
+    # estan dentro de las raices permitidas, asi que el sandbox global no basta.
+    vecino = rutas.raiz_fabrica() / "vecino-secreto"
+    vecino.mkdir(parents=True, exist_ok=True)
+    secreto = vecino / "secreto.txt"
+    secreto.write_text("no me toques\n", encoding="utf-8")
+
+    colados = []
+    for ataque in ("..", "./sub/..", "../vecino-secreto", "../vecino-secreto/secreto.txt"):
+        try:
+            archivos.leer_archivo(nombre, ataque)
+            colados.append("leer " + ataque)
+        except (archivos.ErrorArchivo, rutas.ErrorRuta):
+            pass
+        try:
+            archivos.crear_carpeta(nombre, "{}/nueva".format(ataque))
+            colados.append("crear " + ataque)
+        except (archivos.ErrorArchivo, rutas.ErrorRuta):
+            pass
+    _comprobar(
+        not colados,
+        "path traversal bloqueado en las herramientas (confinar_a_base)",
+        "; ".join(colados),
+    )
+
+    try:
+        archivos.borrar(nombre, "..", recursivo=True)
+        _fallo("borrado de '..'", "no se bloqueo")
+    except (archivos.ErrorArchivo, rutas.ErrorRuta):
+        _ok("borrado de '..' bloqueado")
+    _comprobar(secreto.exists(), "el proyecto vecino sigue intacto tras el intento")
+
+    try:
+        archivos.escribir_archivo(nombre, "../vecino-secreto/colado.txt", "x")
+        _fallo("escritura en el proyecto vecino", "no se bloqueo")
+    except (archivos.ErrorArchivo, rutas.ErrorRuta):
+        _ok("escritura en el proyecto vecino bloqueada")
+    _comprobar(
+        not (vecino / "colado.txt").exists(),
+        "el intento rechazado no dejo rastro en el vecino",
+    )
+
     try:
         archivos.borrar(nombre, "docs", recursivo=False)
         _fallo("borrado de carpeta sin recursivo", "no se bloqueo")

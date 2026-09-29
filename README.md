@@ -382,6 +382,11 @@ los repone en el siguiente proyecto que crees.
 
 - Todo pasa por `rutas.py`: los nombres se normalizan a *slug* y cualquier ruta
   que se salga de `proyectos/` (o del propio repositorio) se **rechaza**.
+- **Las herramientas de archivos no salen del proyecto activo**: `..`, `./sub/..`
+  o `../otro-proyecto/x` se rechazan aunque el destino siga dentro de
+  `proyectos/`, y un enlace que apunte fuera del proyecto no se lista, ni se
+  busca, ni se lee. Ese candado (`confinar_a_base`) no lo relaja
+  `ARQUITECTO_PERMITIR_EXTERNO`.
 - Solo si pones `ARQUITECTO_PERMITIR_EXTERNO=true` se relaja el sandbox. Es
   comodo y es peligroso: dejalo en `false`.
 - La carpeta `.git` esta **protegida**: la IA no puede escribir dentro.
@@ -910,6 +915,7 @@ funcionan antes de conectar el modelo real.
 | El informe trae `estado_dependencias=pendiente_*` | El proyecto se creo, pero `pip` no dejo las librerias dentro de su `venv/`. Mira el error que acompana al estado y reintenta con `preparar_entorno(proyecto="<slug>", instalar=true)`. Detalle en *Entorno virtual y librerias del proyecto*. |
 | No quiero instalar librerias al crear proyectos | Deja `ARQUITECTO_INSTALAR_DEPENDENCIAS=false` (es el valor por defecto) y llama a `preparar_entorno` solo cuando lo necesites. |
 | `Ruta fuera de las raices permitidas` | El sandbox funcionando: la fabrica solo escribe en `proyectos/` y en este repositorio. Si de verdad necesitas otra ruta, `ARQUITECTO_PERMITIR_EXTERNO=true` y reinicia el servidor MCP. |
+| `Ruta fuera del proyecto por '..'` | El sandbox del proyecto activo funcionando: las herramientas de archivos solo trabajan dentro de su carpeta. Escribe la ruta directa desde la raiz del proyecto (`docs/notas.md`) en vez de subir con `..`. |
 | `La carpeta .git esta protegida` | Es a proposito. Para el estado del repositorio usa `estado_git` / `commit_proyecto`, no `escribir_archivo`. |
 | `gh repo create fallo` | GitHub CLI sin sesion o nombre ocupado: `gh auth login` y comprueba el nombre con `gh repo view`. |
 | El orquestador se para en la primera ronda | Revisa `datos/orquestador_<proyecto>.txt` y la ultima salida: o falta la API key (`arquitecto_mcp.py --check`) o el modelo no devolvio el formato `### ARCHIVO:`. |
@@ -955,7 +961,10 @@ en *Output → MCP Logs*.
   (12 por defecto) y `ARQUITECTO_MAX_CARACTERES` (24 000) acotan el gasto.
 - **Sandbox de la fabrica**: `rutas.py` es el unico punto por el que pasan las
   rutas de disco. Solo se puede escribir dentro de `proyectos/` y de este
-  repositorio; `.git` y los binarios estan bloqueados. Los proyectos generados
+  repositorio; `.git` y los binarios estan bloqueados. Ademas cada herramienta
+  de archivos se mueve **solo dentro del proyecto activo** (`confinar_a_base`),
+  asi que un proyecto no puede espiar ni tocar al de al lado ni a la raiz comun
+  de `proyectos/`. Los proyectos generados
   son carpetas independientes con su propio git, asi que un error de la IA no
   puede tocar tus otros repositorios.
 - `proyectos/` esta en `.gitignore`: no se anida dentro de este repositorio.

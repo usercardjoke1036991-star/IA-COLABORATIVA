@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -105,3 +106,96 @@ def test_esta_dentro_admite_la_misma_carpeta_escrita_de_otra_forma(sandbox):
     assert rutas.esta_dentro(alias / "proyectos" / "nuevo.txt", real / "proyectos")
     assert rutas.esta_dentro(alias / "registro.json", real)
     assert not rutas.esta_dentro(alias / "fuera.txt", real / "proyectos")
+
+
+# --------------------------------------------------------------------------
+# Confinamiento: la ruta no puede salir de la base declarada
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "ataque",
+    [
+        "..",
+        "../",
+        "./sub/..",
+        "../otro-proyecto",
+        "../otro-proyecto/colado.txt",
+        "sub/../../colado.txt",
+    ],
+)
+def test_resolver_confinado_bloquea_el_traversal_con_puntos(sandbox, ataque):
+    """Los ataques clasicos caen, aunque el destino siga dentro de la fabrica."""
+    base = sandbox / "proyectos" / "demo"
+
+    with pytest.raises(ErrorRuta, match="fuera del proyecto"):
+        rutas.resolver(ataque, base=base, confinar_a_base=True)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="las barras invertidas solo son ruta en Windows")
+def test_resolver_confinado_bloquea_el_traversal_con_barras_invertidas(sandbox):
+    base = sandbox / "proyectos" / "demo"
+
+    with pytest.raises(ErrorRuta, match="fuera del proyecto"):
+        rutas.resolver("..\\otro-proyecto\\colado.txt", base=base, confinar_a_base=True)
+
+
+def test_resolver_confinado_admite_la_base_y_sus_hijos(sandbox):
+    base = sandbox / "proyectos" / "demo"
+
+    assert rutas.resolver(".", base=base, confinar_a_base=True) == base.resolve()
+    interno = rutas.resolver("src/app.py", base=base, crear_padres=True, confinar_a_base=True)
+
+    assert interno.parent.is_dir()
+    assert rutas.esta_dentro(interno, base)
+
+
+def test_resolver_confinado_bloquea_una_ruta_absoluta_de_fuera(sandbox):
+    base = sandbox / "proyectos" / "demo"
+    base.mkdir(parents=True)
+    vecino = sandbox / "proyectos" / "vecino"
+    vecino.mkdir()
+
+    with pytest.raises(ErrorRuta, match="fuera del proyecto"):
+        rutas.resolver(str(vecino / "secreto.txt"), base=base, confinar_a_base=True)
+
+
+def test_el_intento_confinado_no_crea_carpetas(sandbox):
+    """El candado se comprueba antes de crear padres: no deja rastro."""
+    base = sandbox / "proyectos" / "demo"
+
+    with pytest.raises(ErrorRuta):
+        rutas.resolver(
+            "../otro-proyecto/colado.txt",
+            base=base,
+            crear_padres=True,
+            confinar_a_base=True,
+        )
+
+    assert not (sandbox / "proyectos" / "otro-proyecto").exists()
+
+
+def test_confinar_a_base_manda_sobre_permitir_externo(sandbox):
+    """El permiso de escritura externa no abre la puerta al proyecto vecino."""
+    base = sandbox / "proyectos" / "demo"
+
+    with pytest.raises(ErrorRuta, match="fuera del proyecto"):
+        rutas.resolver(
+            "../otro-proyecto/colado.txt",
+            base=base,
+            permitir_externo=True,
+            confinar_a_base=True,
+        )
+
+
+def test_sin_confinar_se_conserva_el_comportamiento_anterior(sandbox):
+    """El candado es explicito: quien no lo pide mantiene lo de antes."""
+    destino = rutas.resolver("../otro-proyecto/x.txt", base=sandbox / "proyectos" / "demo")
+
+    assert destino == (sandbox / "proyectos" / "otro-proyecto" / "x.txt").resolve()
+
+
+@pytest.mark.parametrize("ataque", ["..", "./sub/..", "../otro-proyecto"])
+def test_resolver_en_proyecto_no_salta_al_proyecto_vecino(sandbox, ataque):
+    (sandbox / "proyectos" / "vecino").mkdir(parents=True)
+
+    with pytest.raises(ErrorRuta):
+        resolver_en_proyecto("demo", ataque)

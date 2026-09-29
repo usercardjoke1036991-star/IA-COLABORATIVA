@@ -5,6 +5,12 @@ Este modulo es la **unica** puerta de entrada a disco. Todas las funciones:
 * reciben el nombre del proyecto y una ruta **relativa** dentro de el;
 * pasan por :mod:`rutas`, que valida la raiz permitida, normaliza el nombre y
   bloquea binarios o nombres reservados de Windows;
+* quedan **confinadas al proyecto**: ``rutas.resolver`` recibe
+  ``confinar_a_base=True``, de modo que ``..``, ``./sub/..`` o
+  ``../otro-proyecto/x`` se rechazan aunque ``ARQUITECTO_PERMITIR_EXTERNO`` este
+  activo. El sandbox del proyecto activo no se negocia;
+* no siguen enlaces que apunten fuera del proyecto (ni al listar, ni al buscar,
+  ni al leer): un enlace simbolico dentro del arbol no es una puerta trasera;
 * nunca tocan la carpeta ``.git`` (protegida a proposito: git la gestiona el,
   no la IA) ni los ficheros de bloqueo que pueden estar en uso.
 
@@ -92,13 +98,32 @@ def base_de_proyecto(proyecto: str) -> Path:
 
 
 def _resolver(proyecto: str, ruta: str, crear_padres: bool = False) -> Path:
-    """Resuelve una ruta del proyecto aplicando el sandbox de :mod:`rutas`."""
+    """Resuelve una ruta del proyecto aplicando el sandbox de :mod:`rutas`.
+
+    ``confinar_a_base=True`` es el candado clave: la ruta tiene que acabar
+    dentro de la carpeta del proyecto (``base_de_proyecto``), asi que ``..``,
+    ``./sub/..`` o ``../otro-proyecto/x`` se rechazan con :class:`rutas.ErrorRuta`
+    en vez de tocar el proyecto vecino o la raiz comun de la fabrica.
+    """
     return rutas.resolver(
         ruta,
         base=base_de_proyecto(proyecto),
         crear_padres=crear_padres,
         permitir_externo=config_fabrica().permitir_externo,
+        confinar_a_base=True,
     )
+
+
+def _fuera_del_proyecto(objetivo: Path, base: Path) -> bool:
+    """True si ``objetivo`` no cuelga de ``base`` (la carpeta del proyecto).
+
+    ``rglob`` ya no sigue enlaces de carpeta, pero un archivo enlazado dentro
+    del proyecto si puede apuntar a fuera: este filtro corta esa fuga antes de
+    mostrar la ruta al modelo o de leer su contenido. Recibe la base ya
+    calculada a proposito: ``base_de_proyecto`` lee el registro y no puede
+    llamarse una vez por entrada del arbol.
+    """
+    return not rutas.esta_dentro(objetivo, base)
 
 
 def _rechazar_git(destino: Path) -> None:
@@ -293,6 +318,12 @@ def mover(proyecto: str, origen: str, destino: str) -> str:
 
     if not fuente.exists():
         raise ErrorArchivo("No existe {}.".format(_relativa(fuente, proyecto)))
+    # Mover la raiz se lleva el proyecto entero a otra parte (y el destino, al
+    # estar confinado, seria su propio hijo: un bucle). Se rechaza explicitamente.
+    if fuente.resolve() == base_de_proyecto(proyecto):
+        raise ErrorArchivo(
+            "No se puede mover la raiz del proyecto: mueve archivos o carpetas concretas."
+        )
     if objetivo.exists():
         raise ErrorArchivo(
             "El destino {} ya existe: borralo o elige otro nombre.".format(
@@ -351,8 +382,20 @@ def borrar(proyecto: str, ruta: str, recursivo: bool = False) -> str:
 # --------------------------------------------------------------------------
 # Exploracion
 # --------------------------------------------------------------------------
-def _recorrer(raiz: Path, profundidad: int, max_entradas: int) -> Tuple[List[str], bool]:
+def _recorrer(
+    raiz: Path,
+    profundidad: int,
+    max_entradas: int,
+    base: Path | None = None,
+) -> Tuple[List[str], bool]:
     """Arbol de texto (estilo ``tree``) con limite de profundidad y de entradas.
+
+    Args:
+        raiz: carpeta por la que empieza el arbol.
+        profundidad: niveles a mostrar.
+        max_entradas: tope de lineas.
+        base: carpeta del proyecto. Con ella se omite lo que quede fuera (un
+            enlace que apunte a otra parte no se lista ni se recorre).
 
     Returns:
         (lineas, truncado)
@@ -371,6 +414,8 @@ def _recorrer(raiz: Path, profundidad: int, max_entradas: int) -> Tuple[List[str
         for hijo in hijos:
             if hijo.name in IGNORAR:
                 continue
+            if base is not None and _fuera_del_proyecto(hijo, base):
+                continue  # enlace que sale del proyecto: no se muestra ni se sigue
             if len(lineas) >= max_entradas:
                 truncado = True
                 return
@@ -430,7 +475,12 @@ def listar_proyecto(
     if objetivo.is_file():
         return leer_archivo(proyecto, subcarpeta)
 
-    lineas, truncado = _recorrer(objetivo, max(1, int(profundidad)), max(1, int(max_entradas)))
+    lineas, truncado = _recorrer(
+        objetivo,
+        max(1, int(profundidad)),
+        max(1, int(max_entradas)),
+        base_de_proyecto(proyecto),
+    )
     titulo = "{}:{}".format(proyecto, _relativa(objetivo, proyecto))
     cuerpo = "\n".join(lineas) if lineas else "(vacio)"
     cola = "\n[... truncado: sube la profundidad solo si hace falta]" if truncado else ""
@@ -451,6 +501,8 @@ def buscar_archivos(proyecto: str, patron: str, max_resultados: int = 60) -> str
             continue
         if any(parte in IGNORAR for parte in ruta.parts):
             continue
+        if _fuera_del_proyecto(ruta, raiz):
+            continue  # archivo enlazado hacia fuera del proyecto
         if ruta.match(patron) or fnmatch.fnmatch(ruta.name, patron):
             encontrados.append(_relativa(ruta, proyecto))
             if len(encontrados) >= max_resultados:
@@ -481,6 +533,7 @@ def buscar_en_contenido(
         raise ErrorArchivo("Indica el texto a buscar.")
     # Misma razon que en ``listar_proyecto``: la raiz del proyecto sale de la
     # ficha registrada, no de ``proyectos/<slug>``.
+    base = base_de_proyecto(proyecto)
     raiz = _resolver(proyecto, subcarpeta or ".")
     if not raiz.exists():
         raise ErrorArchivo("No existe la ruta a buscar dentro de {}.".format(proyecto))
@@ -496,6 +549,8 @@ def buscar_en_contenido(
             continue
         if any(parte in IGNORAR for parte in ruta.parts):
             continue
+        if _fuera_del_proyecto(ruta, base):
+            continue  # enlace hacia fuera del proyecto: no se lee su contenido
         if ruta.suffix.lower() not in TEXTO_CONOCIDO:
             continue
         try:

@@ -273,6 +273,7 @@ def _escribir(carpeta: Path, relativo: str, contenido: str, sobreescribir: bool)
         base=carpeta,
         crear_padres=True,
         permitir_externo=configuracion.cargar_fabrica().permitir_externo,
+        confinar_a_base=True,
     )
     if any(parte.lower() == ".git" for parte in destino.parts):
         raise ValueError("la carpeta .git esta protegida: la activacion no la toca")

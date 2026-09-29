@@ -7,6 +7,12 @@ Reglas que aplica este modulo (no escribe nada: solo calcula y valida rutas):
 * Los nombres de proyecto o carpeta se normalizan a *slug*, de modo que no
   puedan contener ``..``, rutas absolutas encubiertas ni nombres reservados
   de Windows (``CON``, ``NUL``, ``LPT1``...).
+* Con ``confinar_a_base=True`` (lo que usan las herramientas de archivos) el
+  destino tiene que quedar **dentro de la base declarada**, o sea, dentro del
+  proyecto activo. Ni ``..``, ni ``./sub/..``, ni ``../otro-proyecto/x`` pueden
+  saltarse ese candado: el sandbox del proyecto manda incluso sobre
+  ``ARQUITECTO_PERMITIR_EXTERNO`` (ese permiso solo relaja las raices globales
+  de la comprobacion que no confina, como el registro de proyectos).
 * Con ``ARQUITECTO_PERMITIR_EXTERNO=true`` la restriccion se relaja para poder
   escribir en cualquier ruta absoluta. Es comodo y es peligroso: dejalo en
   ``false`` salvo que sepas exactamente por que lo necesitas.
@@ -95,6 +101,7 @@ def resolver(
     base: Path | None = None,
     permitir_externo: bool = False,
     crear_padres: bool = False,
+    confinar_a_base: bool = False,
 ) -> Path:
     """Valida y devuelve la ruta absoluta de ``destino``.
 
@@ -104,9 +111,15 @@ def resolver(
             raiz de la fabrica de proyectos.
         permitir_externo: salta la comprobacion de raices permitidas.
         crear_padres: crea los directorios intermedios si no existen.
+        confinar_a_base: exige que el destino acabe **dentro de ``base``**. Es
+            el candado del proyecto activo: bloquea ``..``, ``./sub/..``,
+            ``../otro-proyecto`` y cualquier ruta absoluta que apunte fuera. Se
+            comprueba antes de crear carpetas, asi que un intento rechazado no
+            deja rastro en disco.
 
     Raises:
-        ErrorRuta: si la ruta se sale de las raices permitidas o es invalida.
+        ErrorRuta: si la ruta se sale de las raices permitidas, si intenta
+            salirse de ``base`` (con ``confinar_a_base``) o si es invalida.
     """
     texto = (destino or "").strip().strip('"')
     if not texto:
@@ -114,9 +127,24 @@ def resolver(
     if "\0" in texto:
         raise ErrorRuta("Ruta invalida: contiene un byte nulo.")
 
+    referencia = Path(base) if base is not None else raiz_fabrica()
     candidata = Path(texto)
+
+    # Candado del sandbox del proyecto. Primero se rechaza cualquier '..' en la
+    # ruta: ``resolve()`` colapsa "./sub/.." a la propia raiz, asi que confiar
+    # solo en la comparacion de rutas dejaria pasar formas raras de escribir el
+    # mismo ataque. Moverse hacia arriba nunca hace falta dentro de un proyecto.
+    if confinar_a_base and ".." in candidata.parts:
+        raise ErrorRuta(
+            "Ruta fuera del proyecto por '..': '{}' intenta subir de nivel y las "
+            "herramientas de archivos no salen de su carpeta. Escribe la ruta "
+            "directa desde la raiz del proyecto (por ejemplo 'docs/notas.md').".format(
+                texto
+            )
+        )
+
     if not candidata.is_absolute():
-        candidata = Path(base or raiz_fabrica()) / candidata
+        candidata = referencia / candidata
 
     try:
         absoluta = candidata.resolve()
@@ -144,6 +172,23 @@ def resolver(
                     absoluta, ", ".join(str(raiz) for raiz in raices)
                 )
             )
+
+    # Candado del sandbox del proyecto: ademas de resolver (para atrapar los
+    # enlaces que apuntan fuera y las rutas absolutas) se comprueba que el
+    # resultado quede dentro de la base. Va ANTES de crear carpetas, para que un
+    # intento rechazado no deje ni rastro. No lo salta ARQUITECTO_PERMITIR_EXTERNO
+    # a proposito: ese permiso es para elegir donde vive una carpeta, no para que
+    # una herramienta se salga de su proyecto. ``esta_dentro`` normaliza las dos
+    # rutas, asi que los nombres cortos de Windows (8.3) y los enlaces validos no
+    # dan falsos positivos.
+    if confinar_a_base and not esta_dentro(absoluta, referencia):
+        raise ErrorRuta(
+            "Ruta fuera del proyecto: '{}' acaba en {}\n"
+            "La base del proyecto es {} y las herramientas de archivos no salen "
+            "de ahi: usa una ruta relativa a su raiz y sin '..'.".format(
+                texto, absoluta, referencia.resolve()
+            )
+        )
 
     if crear_padres:
         try:
@@ -174,9 +219,14 @@ def resolver_en_proyecto(
 
     Es el modo que usan las herramientas de archivos: asi el PROGRAMADOR puede
     escribir ``"app/main.py"`` indicando aparte el proyecto al que pertenece, sin
-    depender del directorio de trabajo del servidor MCP.
+    depender del directorio de trabajo del servidor MCP. La ruta queda confinada
+    al proyecto: ``..`` no sirve para colarse en el de al lado.
     """
     base = ruta_de_proyecto(proyecto) if (proyecto and proyecto.strip()) else raiz_fabrica()
     return resolver(
-        ruta, base=base, crear_padres=crear_padres, permitir_externo=permitir_externo
+        ruta,
+        base=base,
+        crear_padres=crear_padres,
+        permitir_externo=permitir_externo,
+        confinar_a_base=True,
     )
