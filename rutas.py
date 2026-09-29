@@ -10,9 +10,12 @@ Reglas que aplica este modulo (no escribe nada: solo calcula y valida rutas):
 * Con ``confinar_a_base=True`` (lo que usan las herramientas de archivos) el
   destino tiene que quedar **dentro de la base declarada**, o sea, dentro del
   proyecto activo. Ni ``..``, ni ``./sub/..``, ni ``../otro-proyecto/x`` pueden
-  saltarse ese candado: el sandbox del proyecto manda incluso sobre
-  ``ARQUITECTO_PERMITIR_EXTERNO`` (ese permiso solo relaja las raices globales
-  de la comprobacion que no confina, como el registro de proyectos).
+  saltarse ese candado, y tampoco las rutas absolutas o *rooted* (``C:\\...``,
+  ``/etc/...``, ``\\\\?\\...``, ``\\\\host\\recurso``) ni los nombres reservados de
+  Windows en cualquier tramo (``CON``, ``NUL``, ``COM1``...): el sandbox del
+  proyecto manda incluso sobre ``ARQUITECTO_PERMITIR_EXTERNO`` (ese permiso solo
+  relaja las raices globales de la comprobacion que no confina, como el registro
+  de proyectos).
 * Con ``ARQUITECTO_PERMITIR_EXTERNO=true`` la restriccion se relaja para poder
   escribir en cualquier ruta absoluta. Es comodo y es peligroso: dejalo en
   ``false`` salvo que sepas exactamente por que lo necesitas.
@@ -96,6 +99,22 @@ def esta_dentro(ruta: Path, raiz: Path) -> bool:
     return objetivo == contenedor or objetivo.startswith(contenedor + os.sep)
 
 
+def _nombre_reservado(candidata: Path) -> str:
+    """Primer tramo de la ruta que Windows reserva (``CON``, ``NUL``, ``COM1``...).
+
+    Mira **cualquier** tramo, no solo el ultimo: ``CON/notas.md`` tambien acaba en
+    un dispositivo en Windows. Y compara tambien la raiz del nombre, porque
+    ``con.txt`` apunta al mismo dispositivo que ``CON``.
+    """
+    for parte in candidata.parts:
+        limpio = parte.split(":")[0].strip().rstrip(".")
+        if not limpio:
+            continue
+        if limpio.lower() in RESERVADOS or limpio.split(".")[0].lower() in RESERVADOS:
+            return parte
+    return ""
+
+
 def resolver(
     destino: str,
     base: Path | None = None,
@@ -113,9 +132,10 @@ def resolver(
         crear_padres: crea los directorios intermedios si no existen.
         confinar_a_base: exige que el destino acabe **dentro de ``base``**. Es
             el candado del proyecto activo: bloquea ``..``, ``./sub/..``,
-            ``../otro-proyecto`` y cualquier ruta absoluta que apunte fuera. Se
-            comprueba antes de crear carpetas, asi que un intento rechazado no
-            deja rastro en disco.
+            ``../otro-proyecto``, las rutas absolutas o *rooted* (``C:\\...``,
+            ``/etc/...``, ``\\\\?\\...``, ``\\\\host\\recurso``) y los nombres
+            reservados de Windows en cualquier tramo. Se comprueba antes de crear
+            carpetas, asi que un intento rechazado no deja rastro en disco.
 
     Raises:
         ErrorRuta: si la ruta se sale de las raices permitidas, si intenta
@@ -130,18 +150,38 @@ def resolver(
     referencia = Path(base) if base is not None else raiz_fabrica()
     candidata = Path(texto)
 
-    # Candado del sandbox del proyecto. Primero se rechaza cualquier '..' en la
-    # ruta: ``resolve()`` colapsa "./sub/.." a la propia raiz, asi que confiar
-    # solo en la comparacion de rutas dejaria pasar formas raras de escribir el
-    # mismo ataque. Moverse hacia arriba nunca hace falta dentro de un proyecto.
-    if confinar_a_base and ".." in candidata.parts:
-        raise ErrorRuta(
-            "Ruta fuera del proyecto por '..': '{}' intenta subir de nivel y las "
-            "herramientas de archivos no salen de su carpeta. Escribe la ruta "
-            "directa desde la raiz del proyecto (por ejemplo 'docs/notas.md').".format(
-                texto
+    # Candado del sandbox del proyecto. El orden importa y va ANTES de tocar el
+    # disco: (1) fuera las rutas absolutas o *rooted* (unidad, ``C:\``, ``/``,
+    # ``\\?\``, ``\\.\``, ``\\host\recurso``) porque no son "relativas al
+    # proyecto" ni siquiera con el permiso de escritura externa, (2) fuera los
+    # nombres reservados de Windows en cualquier tramo y (3) fuera cualquier '..'.
+    # ``resolve()`` colapsa "./sub/.." a la propia raiz, asi que confiar solo en la
+    # comparacion de rutas dejaria pasar formas raras de escribir el mismo ataque;
+    # en Windows ademas una ruta *rooted* sin unidad (``/etc/passwd``) no es
+    # ``is_absolute()`` pero al unirla a la base se lleva por delante la raiz.
+    if confinar_a_base:
+        if candidata.is_absolute() or texto.startswith(("/", "\\")):
+            raise ErrorRuta(
+                "Ruta fuera del proyecto: '{}' es absoluta o de red/dispositivo "
+                "(letra de unidad, \\\\?\\, \\\\host\\recurso). Las herramientas de archivos "
+                "solo aceptan rutas relativas a la raiz del proyecto.".format(texto)
             )
-        )
+
+        reservado = _nombre_reservado(candidata)
+        if reservado:
+            raise ErrorRuta(
+                "Ruta fuera del proyecto: '{}' usa el nombre reservado '{}', que en "
+                "Windows apunta a un dispositivo y no a un archivo.".format(texto, reservado)
+            )
+
+        if ".." in candidata.parts:
+            raise ErrorRuta(
+                "Ruta fuera del proyecto por '..': '{}' intenta subir de nivel y las "
+                "herramientas de archivos no salen de su carpeta. Escribe la ruta "
+                "directa desde la raiz del proyecto (por ejemplo 'docs/notas.md').".format(
+                    texto
+                )
+            )
 
     if not candidata.is_absolute():
         candidata = referencia / candidata

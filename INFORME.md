@@ -197,3 +197,110 @@ README.md
 5. CI: no hay lint. Anadir ruff (config minima en pyproject/ruff.toml) como paso del job pruebas daria una red barata contra errores de import/estilo en 30 s.
 
 6. Opcional: repetir la suite en POSIX a mano no hace falta ya (ubuntu-latest paso en verde), pero el test de enlaces de fichero solo se ejecuta donde el sistema permite symlinks; en Windows se cubre con la junction. Documentarlo en el README de tests para que nadie borre ese skip pensando que no prueba nada.
+
+## Ronda 3 - 
+
+### Que se hizo
+
+RONDA 3 CERRADA Y PUBLICADA (commits 97430d0 y d05d3e7; CI en verde para los dos SHA). Se hicieron las dos sugerencias de valor alto que pediste, en el orden que marcaste.
+
+1) [Sugerencia 1] Interprete del venv citado en scripts shell. En scripts/instalar.sh las 5 llamadas pasan a "$RAIZ/venv/bin/python" (y el test [[ -x ]] tambien), con un comentario que explica por que. Ojo: la ruta ABSOLUTA y citada, no "venv/bin/python", porque el cd del script no protege de una ruta con espacios si algo se ejecuta fuera de el.
+
+2) [Sugerencia 1] Guardian en scripts/verificar_fabrica.py (paso 2): _lineas_sin_comillas() + _textos_sh() + _revisar_scripts_sh(). Revisa los .sh del repositorio Y los que genere la fabrica (hoy ninguno: la fabrica solo genera .ps1, pero el guardian queda puesto). Ignora a proposito las lineas de echo/printf y los comentarios (son texto, no llamadas) y soporta las cuatro formas del interprete: venv/bin/python, venv/bin/python3.14, venv/Scripts/python.exe y pythonw.exe. 4 tests unitarios nuevos en tests/test_verificar_fabrica.py (deteccion, casos correctos/echo/comentario, repositorio real, y scripts generados).
+
+3) [Sugerencia 2] Candado de la politica base_de_proyecto() en tests/test_politica_rutas.py (3 tests, inspeccion estatica con ast): (a) en herramientas_archivos.py las UNICAS funciones que pueden llamar a rutas.ruta_de_proyecto son las de la allowlist FUNCIONES_CON_SLUG_JUSTIFICADO (hoy solo base_de_proyecto, el fallback de un proyecto sin ficha): si alguien reinserta el slug en listar/buscar/leer/escribir/borrar, el test falla con el nombre de la funcion culpable; (b) _resolver tiene que resolver via base_de_proyecto(); (c) allowlist PUEDEN_CREAR para los modulos donde crear proyecto por slug si es legitimo (fabrica, orquestador, verificadores y sus dobles). Documentada la regla en README (reglas de seguridad), en la plantilla AGENTS.md de plantillas.py (punto 8, propaga a todo proyecto nuevo) y en el AGENTS.md de este repo.
+
+4) Hallazgo del test (mejor granularidad de la que yo habia disenado): herramientas_archivos.py SI nombra ruta_de_proyecto, dentro de base_de_proyecto() (fallback para un proyecto sin ficha). Mi primer intento prohibia el modulo entero y era falso positivo; ahora el candado es por FUNCION, que es exactamente el defecto real (4 funciones lo usaban donde no tocaba).
+
+5) Hallazgo de higiene del repositorio: IA COLABORATIVA.py (raiz) NO es Python: es el volcado de la conversacion original guardado con extension .py (SyntaxError en la linea 12). El candado AST lo salta; propongo limpiarlo (moverlo a docs/ o borrarlo) en la proxima ronda.
+
+6) Prueba negativa ejecutada de verdad (no solo afirmada): reintroduje el bug en listar_proyecto, el test fallo con el mensaje exacto, restaure la copia (hash SHA-256 identico) y volvio a verde. Es la evidencia de que el candado muerde.
+
+7) PUBLICACION: push 97430d0 y d05d3e7 a origin/main; CI run 36506857344 (d05d3e7) completed/success con Pruebas (ubuntu-latest), Pruebas (windows-latest), SonarQube y SonarCloud Code Analysis en success; el run 36506496250 (97430d0) tambien en success. Arbol limpio; datos/ y proyectos/ intactos.
+
+### Evidencia real
+
+```
+$ bash -n scripts/instalar.sh
+bash -n scripts/instalar.sh -> OK (sin errores de sintaxis)
+
+$ grep -n 'venv/bin/python' scripts/instalar.sh      (lo que queda)
+19:if [[ ! -x "$RAIZ/venv/bin/python" ]]; then
+29:"$RAIZ/venv/bin/python" -m pip install --upgrade pip --quiet
+30:"$RAIZ/venv/bin/python" -m pip install -r requirements.txt --quiet
+42:"$RAIZ/venv/bin/python" scripts/registrar_mcp.py
+45:"$RAIZ/venv/bin/python" scripts/verificar_servidor.py
+46:"$RAIZ/venv/bin/python" scripts/verificar_fabrica.py
+51:echo "  $RAIZ/venv/bin/python"                      <- texto de echo (solo imprime)
+55:echo "  venv/bin/python arquitecto_mcp.py --check"   <- idem
+57:echo "  venv/bin/python orquestador.py --idea ..."   <- idem
+No queda ninguna LLAMADA sin comillas.
+
+$ prueba real con bash en una ruta con espacios (/tmp/prueba venv comillas/venv/bin/python)
+=== 3. Ruta con espacios: CON comillas (lo que hace ahora instalar.sh) ===
+interprete invocado: /tmp/prueba venv comillas/venv/bin/python
+EXIT=0
+=== 4. Ruta con espacios: SIN comillas (el fallo antiguo) ===
+prueba_comillas.sh: line 36: /tmp/prueba: No such file or directory
+EXIT=127
+
+$ pytest foco (politica + shell + plantillas)
+37 passed in 12.93s                                     -> focus_exitcode=0
+
+$ venv\Scripts\python.exe -m pytest -q
+364 passed, 1 skipped in 98.03s (0:01:38)
+(el skip es el symlink de fichero, que en Windows pide privilegios; la fuga por junction SI se prueba)
+
+$ venv\Scripts\python.exe scripts\verificar_fabrica.py
+  [OK]    interprete del venv entrecomillado en los scripts de shell -> 1 script(s) revisados
+============== RESUMEN: 78 comprobaciones OK, 0 FALLOS ===============
+
+Prueba NEGATIVA del candado de politica (bug reintroducido a proposito en listar_proyecto):
+$ pytest -q tests\test_politica_rutas.py
+E  AssertionError: herramientas_archivos.py llama a rutas.ruta_de_proyecto desde
+   base_de_proyecto, listar_proyecto: para contenido que ya existe usa base_de_proyecto()
+E    assert {'base_de_pro...tar_proyecto'} <= {'base_de_proyecto'}
+     Extra items in the left set: 'listar_proyecto'
+1 failed, 2 passed                                       -> negativo_exitcode=1
+hash_antes=927994B08C598D0F91D3102855CF140FA1760CD78ACFF823213257CC1829B0A6
+hash_despues=927994B08C598D0F91D3102855CF140FA1760CD78ACFF823213257CC1829B0A6  (intacto)
+$ pytest -q tests\test_politica_rutas.py
+3 passed in 0.40s                                        -> revertido_exitcode=0
+
+$ git log --oneline -3
+d05d3e7 docs: corregir una palabra del docstring en tests/test_politica_rutas.py
+97430d0 fix(scripts): citar el interprete del venv en los .sh y candado de la politica de rutas
+0e4888e fix(seguridad): confinar las herramientas de archivos al proyecto activo (path traversal)
+$ git push -> 97430d0..d05d3e7  main -> main (push_exit=0); git status --porcelain -> vacio
+$ git status --porcelain -- datos proyectos -> vacio
+
+CI (API GitHub):
+run=36506496250 (97430d0) | completed | success -> Pruebas (ubuntu), Pruebas (windows), SonarQube
+run=36506857344 (d05d3e7) | completed | success
+  job=Pruebas (ubuntu-latest) | success
+  job=Pruebas (windows-latest) | success
+  job=SonarQube | success
+  check=SonarCloud Code Analysis | completed | success
+```
+
+### Archivos tocados
+
+scripts/instalar.sh
+scripts/verificar_fabrica.py
+tests/test_politica_rutas.py (nuevo)
+tests/test_verificar_fabrica.py
+plantillas.py
+AGENTS.md
+README.md
+
+### Sugerencias propias del programador
+
+1. Limpiar IA COLABORATIVA.py: no es Python valido (volcado de chat de la idea original). Moverlo a docs/idea-original.md y borrar el .py evita que cualquier herramienta futura (o un guardián AST mas estricto) tropiece con el.
+
+2. Extender el guardián de comillas al canal PowerShell: hoy el paso 2 revisa los .ps1 con una comprobacion de texto simple ('venv\Scripts\python.exe' in contenido) y no verifica el entrecomillado. Un chequeo equivalente a _lineas_sin_comillas para .ps1/.bat/.cmd cerraria la misma clase de fallo en Windows.
+
+3. Anadir `bash -n` de los .sh al CI (ubuntu-latest lo tiene): es un paso de 2 segundos que cierra el canal POSIX de verdad, en la plataforma donde esos scripts se ejecutan.
+
+4. El guardián actual vive en verificar_fabrica.py (solo corre en Windows en el CI). Si quieres que el candado de comillas proteja tambien en Linux, moverlo a un modulo compartido (por ejemplo rutas.py o un nuevo scripts/revisar_scripts.py) y llamarlo desde los dos verificadores.
+
+5. Fix rapido de coherencia: el [1/4]...[5/5] de scripts/instalar.sh esta desalineado (hay un [4/5] y un [5/5] despues de un [3/4]). Cosmetico, pero se ve en la primera instalacion del usuario.

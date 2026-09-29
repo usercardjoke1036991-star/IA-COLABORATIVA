@@ -331,6 +331,34 @@ def paso_archivos(archivos, rutas, nombre: str) -> None:
         "; ".join(colados),
     )
 
+    # Vectores de ruta absoluta, de dispositivo y de recurso de red: no son
+    # "relativas al proyecto" ni con el permiso de escritura externa activo.
+    if os.name == "nt":
+        absolutos = (
+            "C:\\Windows\\win.ini",
+            "\\\\?\\C:\\Windows\\win.ini",
+            "\\\\localhost\\c$\\secreto.txt",
+        )
+    else:
+        absolutos = ("/etc/passwd", "/tmp/secreto.txt")
+    con_absolutas = []
+    for ataque in absolutos:
+        try:
+            archivos.leer_archivo(nombre, ataque)
+            con_absolutas.append("leer " + ataque)
+        except (archivos.ErrorArchivo, rutas.ErrorRuta):
+            pass
+        try:
+            archivos.crear_carpeta(nombre, "{}/nueva".format(ataque))
+            con_absolutas.append("crear " + ataque)
+        except (archivos.ErrorArchivo, rutas.ErrorRuta):
+            pass
+    _comprobar(
+        not con_absolutas,
+        "rutas absolutas, de dispositivo y de red bloqueadas",
+        "; ".join(con_absolutas),
+    )
+
     try:
         archivos.borrar(nombre, "..", recursivo=True)
         _fallo("borrado de '..'", "no se bloqueo")

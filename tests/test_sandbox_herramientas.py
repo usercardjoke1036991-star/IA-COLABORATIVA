@@ -132,6 +132,53 @@ def test_borrar_no_sale_del_proyecto(dos_proyectos, ataque):
     assert (dos_proyectos / "proyectos" / "victima").is_dir()
 
 
+#: Rutas absolutas o de red: fuera del proyecto en cualquier plataforma.
+ATAQUES_ABSOLUTOS = ["/etc/passwd", "/tmp/colado.txt", "//otro/share/colado.txt"]
+
+#: Vectores de ruta propios de Windows (unidad, dispositivo y recurso de red).
+ATAQUES_WINDOWS = [
+    "C:\\Windows\\win.ini",
+    "C:/Windows/win.ini",
+    "\\\\?\\C:\\Windows\\win.ini",
+    "\\\\.\\NUL",
+    "\\\\localhost\\c$\\colado.txt",
+]
+
+
+@pytest.mark.parametrize("ataque", ATAQUES_ABSOLUTOS)
+def test_ninguna_herramienta_acepta_rutas_absolutas_o_de_red(dos_proyectos, ataque):
+    """Una ruta absoluta no es una ruta del proyecto: la rechaza el candado."""
+    with pytest.raises(AQUI):
+        archivos.escribir_archivo("victima", ataque, "colado")
+    with pytest.raises(AQUI):
+        archivos.crear_carpeta("victima", ataque)
+    with pytest.raises(AQUI):
+        archivos.leer_archivo("victima", ataque)
+    with pytest.raises(AQUI):
+        archivos.borrar("victima", ataque, recursivo=True)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="vectores de ruta propios de Windows")
+@pytest.mark.parametrize("ataque", ATAQUES_WINDOWS)
+def test_ninguna_herramienta_acepta_vectores_de_windows(dos_proyectos, ataque):
+    """Letra de unidad, ``\\\\?\\``, ``\\\\.\\`` y ``\\\\host\\recurso``."""
+    with pytest.raises(AQUI):
+        archivos.escribir_archivo("victima", ataque, "colado")
+    with pytest.raises(AQUI):
+        archivos.leer_archivo("victima", ataque)
+    with pytest.raises(AQUI):
+        archivos.info_archivo("victima", ataque)
+
+
+@pytest.mark.parametrize("ataque", ["CON", "aux.md", "carpeta/nul/x.txt"])
+def test_ninguna_herramienta_acepta_nombres_reservados(dos_proyectos, ataque):
+    """Un nombre reservado apunta a un dispositivo, no a un archivo del proyecto."""
+    with pytest.raises(AQUI):
+        archivos.escribir_archivo("victima", ataque, "colado")
+    with pytest.raises(AQUI):
+        archivos.crear_carpeta("victima", ataque)
+
+
 # --------------------------------------------------------------------------
 # Efectos colaterales: el intento rechazado no puede dejar rastro
 # --------------------------------------------------------------------------

@@ -158,6 +158,77 @@ def test_resolver_confinado_bloquea_una_ruta_absoluta_de_fuera(sandbox):
         rutas.resolver(str(vecino / "secreto.txt"), base=base, confinar_a_base=True)
 
 
+@pytest.mark.parametrize(
+    "ataque",
+    [
+        "/etc/passwd",
+        "/tmp/secreto.txt",
+        "//otro/share/x.txt",
+    ],
+)
+def test_resolver_confinado_bloquea_absolutas_y_red(sandbox, ataque):
+    """Una ruta absoluta no es "relativa al proyecto": se rechaza sin resolver."""
+    base = sandbox / "proyectos" / "demo"
+
+    with pytest.raises(ErrorRuta, match="fuera del proyecto"):
+        rutas.resolver(ataque, base=base, confinar_a_base=True)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="vectores de ruta propios de Windows")
+@pytest.mark.parametrize(
+    "ataque",
+    [
+        "C:\\Windows\\win.ini",
+        "C:/Windows/win.ini",
+        "\\\\?\\C:\\Windows\\win.ini",
+        "\\\\.\\NUL",
+        "\\\\localhost\\c$\\secreto.txt",
+        "..\\..\\colado.txt",
+    ],
+)
+def test_resolver_confinado_bloquea_los_vectores_de_windows(sandbox, ataque):
+    """Letra de unidad, dispositivo (``\\\\?\\``, ``\\\\.\\``), recurso de red y ``..``."""
+    base = sandbox / "proyectos" / "demo"
+
+    with pytest.raises(ErrorRuta, match="fuera del proyecto"):
+        rutas.resolver(ataque, base=base, confinar_a_base=True)
+
+
+@pytest.mark.parametrize("ataque", ["CON", "con.txt", "NUL", "aux.md", "COM1", "carpeta/nul/x.txt"])
+def test_resolver_confinado_bloquea_los_nombres_reservados(sandbox, ataque):
+    """Un nombre reservado apunta a un dispositivo, aunque no sea el ultimo tramo."""
+    base = sandbox / "proyectos" / "demo"
+
+    with pytest.raises(ErrorRuta, match="fuera del proyecto"):
+        rutas.resolver(ataque, base=base, confinar_a_base=True)
+
+
+def test_resolver_confinado_no_rechaza_rutas_legitimas_raras(sandbox):
+    """El candado no puede pasarse de listo: espacios, acentos y puntos valen."""
+    base = sandbox / "proyectos" / "demo"
+
+    for valida in ("docs/notas finales.md", "src/ñandú/áéí.py", "api/v2.1/x.json", "a_b-c/d.txt"):
+        destino = rutas.resolver(valida, base=base, crear_padres=True, confinar_a_base=True)
+
+        assert rutas.esta_dentro(destino, base.resolve()), valida
+        assert destino.exists() is False  # el candado no crea el archivo
+
+    assert (base / "src" / "ñandú").is_dir()
+
+
+def test_una_absoluta_tampoco_se_cuela_con_permitir_externo(sandbox):
+    """El permiso de escritura externa no convierte una absoluta en ruta valida."""
+    base = sandbox / "proyectos" / "demo"
+
+    with pytest.raises(ErrorRuta, match="fuera del proyecto"):
+        rutas.resolver(
+            str(sandbox / "fuera.txt"),
+            base=base,
+            permitir_externo=True,
+            confinar_a_base=True,
+        )
+
+
 def test_el_intento_confinado_no_crea_carpetas(sandbox):
     """El candado se comprueba antes de crear padres: no deja rastro."""
     base = sandbox / "proyectos" / "demo"
