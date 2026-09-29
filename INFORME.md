@@ -304,3 +304,91 @@ README.md
 4. El guardián actual vive en verificar_fabrica.py (solo corre en Windows en el CI). Si quieres que el candado de comillas proteja tambien en Linux, moverlo a un modulo compartido (por ejemplo rutas.py o un nuevo scripts/revisar_scripts.py) y llamarlo desde los dos verificadores.
 
 5. Fix rapido de coherencia: el [1/4]...[5/5] de scripts/instalar.sh esta desalineado (hay un [4/5] y un [5/5] despues de un [3/4]). Cosmetico, pero se ve en la primera instalacion del usuario.
+
+## Ronda 4 - 
+
+### Que se hizo
+
+RONDA 4 CERRADA Y PUBLICADA. Tres commits: 750f447 (endurecimiento), 8565214 (fix del quality gate). CI en verde para el SHA final y SonarCloud en A.
+
+1) [Sugerencia 3] Vectores de Windows cerrados en confinar_a_base, con rechazo TEMPRANO (antes de tocar disco) y mensaje propio: rutas absolutas y *rooted* -letra de unidad C:\, raices \ o /, dispositivo \\?\, \\.\, recurso de red \\host\recurso- y nombres reservados en CUALQUIER tramo (CON, NUL, COM1, aux.md, con.txt, carpeta/nul/x.txt). El candado se probo con 28 tests nuevos y con 1 comprobacion nueva en el verificador.
+
+2) Hallazgo tecnico del propio test: en Windows Path("/etc/passwd") NO es is_absolute() (esta rooted pero sin unidad); al unirlo a la base se lleva por delante la raiz y acababa bloqueado por el mensaje equivocado. Ahora la condicion mira tambien si la ruta empieza por separador, con el comentario explicando por que. Es exactamente el tipo de evasion que pediste cubrir.
+
+3) Coherencia del candado: el permiso ARQUITECTO_PERMITIR_EXTERNO NO abre ni las absolutas ni los recursos de red (test dedicado). Riesgo que señalaste (no romper rutas legitimas) cubierto al contrario: test nuevo con espacios, acentos/ñ, puntos y guiones ('docs/notas finales.md', 'src/ñandú/áéí.py', 'api/v2.1/x.json') que siguen pasando y no crean archivos.
+
+4) INCIDENCIA REAL EN PRODUCCION durante esta ronda y como se resolvio: al leer el CI del primer push (750f447) el check 'SonarCloud Code Analysis' salio en FAILURE con Quality Gate fallado por 'D Security Rating on New Code'. Localice la regla por la API publica de SonarCloud: python:S5443 (CRITICAL) en scripts/verificar_fabrica.py:343 por usar el literal "/tmp/secreto.txt" (directorio publicamente escribible). Arreglado construyendo esas rutas con tempfile.gettempdir(), y de paso los tests de absolutas ahora plantan un SENUELO real (un archivo de verdad fuera del proyecto) para que pytest.raises no pueda pasar por el motivo equivocado.
+
+5) Estado final verificado: SHA 8565214 publicado; CI run 36511234685 completed/success (Pruebas windows, Pruebas ubuntu y SonarQube); SonarCloud Code Analysis success con 0 New issues, 0 Security Hotspots y new_security_rating=1.0 (A, antes 4.0/D). Arbol limpio, datos/ y proyectos/ intactos.
+
+6) BLOQUEO DEL ARQUITECTO (lo reporto aunque no es tuyo): dos llamadas a sugerir_mejoras devolvieron 'El proveedor devolvio una respuesta vacia' (loop en pausa). Segui el plan VIGENTE que ya habias dictado en la ronda 2 ('implementa 1 y 2 ... luego 3') en lugar de improvisar, y cierro aqui con este informe para que valides. Si el proveedor sigue caido, la ronda 5 (lint ruff + fabrica._carpeta_registro con permitir_externo) queda pendiente de tu OK.
+
+7) Hallazgo de higiene: IA COLABORATIVA.py (raiz) no es Python valido, es el volcado de la conversacion original (SyntaxError linea 12). El candado AST lo salta; propongo moverlo a docs/idea-original.md.
+
+8) Riesgo de la MAQUINA (no del repo): disco a ~300 MB libres. Con eso, el venv del verificador se crea sin pip y 4 comprobaciones de dependencias fallan con 'No module named pip'; el mismo codigo, tras limpiar temporales, da 79 OK / 0 FALLOS. Conviene liberar espacio antes de la proxima ronda larga.
+
+### Evidencia real
+
+```
+$ pytest foco (rutas + sandbox + politica)
+114 passed, 1 skipped in 133.67s                          -> focus_exitcode=0
+
+$ venv\Scripts\python.exe -m pytest -q
+392 passed, 1 skipped in 119.15s (0:01:59)                -> = 0 fallos
+
+$ venv\Scripts\python.exe scripts\verificar_fabrica.py
+  [OK]    path traversal bloqueado en las herramientas (confinar_a_base)
+  [OK]    rutas absolutas, de dispositivo y de red bloqueadas
+  [OK]    borrado de '..' bloqueado / vecino intacto / rastro cero
+============== RESUMEN: 79 comprobaciones OK, 0 FALLOS ===============
+
+FALLO REAL DURANTE LA RONDA (SonarCloud, detectado al leer el CI del push):
+check=SonarCloud Code Analysis | completed | failure
+  output_title=Quality Gate failed
+  !!! [D Security Rating on New Code] (required >= A)
+API SonarCloud (issues/search):
+  [VULNERABILITY/CRITICAL] python:S5443 | scripts/verificar_fabrica.py | linea 343
+   "Make sure publicly writable directories are used safely here."
+  linea 343 -> absolutos = ("/etc/passwd", "/tmp/secreto.txt")   <- literal en /tmp
+ARREGLO: construir esas rutas con tempfile.gettempdir() (nunca un literal de un
+directorio publicamente escribible) y crear un senuelo real para que el test
+muerda. Commit 8565214.
+
+EVIDENCIA FINAL (SHA 8565214, el publicado):
+$ git push -> 750f447..8565214 main -> main (push_exit=0); git status --porcelain vacio
+$ git ls-remote origin refs/heads/main -> 8565214f9c36acfa618e0bb997939e01eeed0497
+run=36511234685 | CI | status=completed | conclusion=success
+  job=Pruebas (windows-latest) | success
+  job=Pruebas (ubuntu-latest)  | success
+  job=SonarQube                | success
+check=SonarCloud Code Analysis | completed | success
+  !!! 0 New issues | 0 Accepted issues | 0 Security Hotspots
+medidas SonarCloud: security_rating=1.0 (bestValue=true) | new_security_rating=1.0 (bestValue=true)
+
+AVISO DE ENTORNO (causa de 4 fallos que NO eran del codigo): el disco tiene
+~300 MB libres (Get-PSDrive C -> Free=310431744). Con el disco asi, el venv
+temporal del verificador se crea SIN pip ("No module named pip") y los 4 checks
+de dependencias fallan. Tras borrar los temporales de verificaciones anteriores,
+el mismo codigo da 79 OK / 0 FALLOS. Queda como riesgo de la maquina, no del repo.
+```
+
+### Archivos tocados
+
+rutas.py
+tests/test_rutas.py
+tests/test_sandbox_herramientas.py
+scripts/verificar_fabrica.py
+
+### Sugerencias propias del programador
+
+1. El incidente S5443 merece candado propio: añadir un test que prohiba literales de directorios publicamente escribibles (/tmp, /var/tmp, /dev/shm) en el codigo que ESCRIBE (no en tests que solo comprueban rechazos). Es la clase de fallo que acaba de tumbar el quality gate y no la caza ni pytest ni el verificador.
+
+2. El verificador depende de pip real en el temporal: hoy, si el venv se crea sin pip (disco lleno, antivirus, timeout de ensurepip), 4 comprobaciones fallan por entorno y parecen fallos del codigo. Propongo que el paso 4 detecte 'No module named pip' y lo reporte como AVISO con causa (en vez de FALLO), o que reintente con -m ensurepip.
+
+3. Los tests de rutas ahora plantan senuelos reales en %TEMP%. Convendria un fixture que los limpie siempre (hoy el del caso anidado deja %TEMP%/otro/ vacio), para no acumular basura en una maquina con el disco justo.
+
+4. ruff como paso del CI sigue pendiente de tu OK; el repo tiene 392 tests y cero lint, y el incidente de hoy (una ruta literal) es justo lo que una regla de estilo/seguridad barata podria haber avisado antes.
+
+5. IA COLABORATIVA.py (raiz) deberia salir del arbol: no es Python valido y cualquier herramienta que lo intente analizar tropieza. Mover a docs/idea-original.md y borrar el .py.
+
+6. Documentar en README el limite conocido del candado: no resuelve el caso de un enlace/hardlink creado por el propio usuario dentro del proyecto antes de la sesion; el filtro corta los enlaces hacia fuera, pero un hardlink no es detectable en POSIX.
