@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -132,8 +133,28 @@ def test_borrar_no_sale_del_proyecto(dos_proyectos, ataque):
     assert (dos_proyectos / "proyectos" / "victima").is_dir()
 
 
-#: Rutas absolutas o de red: fuera del proyecto en cualquier plataforma.
-ATAQUES_ABSOLUTOS = ["/etc/passwd", "/tmp/colado.txt", "//otro/share/colado.txt"]
+#: Rutas absolutas y de red: fuera del proyecto en cualquier plataforma. Las del
+#: temporal se construyen con ``tempfile`` (una ruta literal a un directorio
+#: publico seria una vulnerabilidad real, python:S5443).
+TEMPORAL = Path(tempfile.gettempdir())
+ATAQUES_ABSOLUTOS = [
+    str(TEMPORAL / "colado.txt"),
+    str(TEMPORAL / "otro" / "colado.txt"),
+]
+
+#: Recurso de red (UNC en Windows, raiz doble en POSIX).
+ATAQUES_RED = ["//otro/share/colado.txt"]
+
+
+def _cebo(ruta: Path) -> Path:
+    """Archivo real fuera del proyecto: si el candado falla, se toca y se ve.
+
+    Sin el, ``pytest.raises`` podria pasar por el motivo equivocado (un archivo
+    que no existe tambien da error).
+    """
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    ruta.write_text("no me toques\n", encoding="utf-8")
+    return ruta
 
 #: Vectores de ruta propios de Windows (unidad, dispositivo y recurso de red).
 ATAQUES_WINDOWS = [
@@ -146,8 +167,10 @@ ATAQUES_WINDOWS = [
 
 
 @pytest.mark.parametrize("ataque", ATAQUES_ABSOLUTOS)
-def test_ninguna_herramienta_acepta_rutas_absolutas_o_de_red(dos_proyectos, ataque):
+def test_ninguna_herramienta_acepta_rutas_absolutas(dos_proyectos, ataque):
     """Una ruta absoluta no es una ruta del proyecto: la rechaza el candado."""
+    cebo = _cebo(Path(ataque))
+
     with pytest.raises(AQUI):
         archivos.escribir_archivo("victima", ataque, "colado")
     with pytest.raises(AQUI):
@@ -156,6 +179,21 @@ def test_ninguna_herramienta_acepta_rutas_absolutas_o_de_red(dos_proyectos, ataq
         archivos.leer_archivo("victima", ataque)
     with pytest.raises(AQUI):
         archivos.borrar("victima", ataque, recursivo=True)
+
+    assert cebo.exists(), "el candado dejo tocar un archivo de fuera del proyecto"
+    assert cebo.read_text(encoding="utf-8") == "no me toques\n"
+    cebo.unlink()
+
+
+@pytest.mark.parametrize("ataque", ATAQUES_RED)
+def test_ninguna_herramienta_acepta_recursos_de_red(dos_proyectos, ataque):
+    """Un recurso de red tampoco es una ruta del proyecto."""
+    with pytest.raises(AQUI):
+        archivos.escribir_archivo("victima", ataque, "colado")
+    with pytest.raises(AQUI):
+        archivos.leer_archivo("victima", ataque)
+    with pytest.raises(AQUI):
+        archivos.crear_carpeta("victima", ataque)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="vectores de ruta propios de Windows")

@@ -332,7 +332,10 @@ def paso_archivos(archivos, rutas, nombre: str) -> None:
     )
 
     # Vectores de ruta absoluta, de dispositivo y de recurso de red: no son
-    # "relativas al proyecto" ni con el permiso de escritura externa activo.
+    # "relativas al proyecto" ni con el permiso de escritura externa activo. Las
+    # absolutas se construyen con el temporal del sistema: una ruta literal de un
+    # directorio publicamente escribible (/tmp, /var/tmp...) es una vulnerabilidad
+    # real (python:S5443) y aqui no hace falta para nada.
     if os.name == "nt":
         absolutos = (
             "C:\\Windows\\win.ini",
@@ -340,7 +343,11 @@ def paso_archivos(archivos, rutas, nombre: str) -> None:
             "\\\\localhost\\c$\\secreto.txt",
         )
     else:
-        absolutos = ("/etc/passwd", "/tmp/secreto.txt")
+        base_temporal = Path(tempfile.gettempdir())
+        absolutos = (
+            str(base_temporal / "secreto.txt"),
+            str(base_temporal / "otro" / "secreto.txt"),
+        )
     con_absolutas = []
     for ataque in absolutos:
         try:
