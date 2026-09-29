@@ -1,6 +1,6 @@
 """Politica de rutas de la fabrica: contenido existente = carpeta FICHADA.
 
-Regla que fija esta suite (nacio de un defecto real, no de una theory): cuando
+Regla que fija esta suite (nacio de un defecto real, no de una hipotesis): cuando
 una herramienta toca contenido que **ya existe**, la carpeta del proyecto se
 pregunta a ``herramientas_archivos.base_de_proyecto()`` (la ruta de la ficha, que
 puede ser cualquier carpeta activada), nunca a ``rutas.ruta_de_proyecto()`` (que
